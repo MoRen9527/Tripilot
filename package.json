@@ -1,0 +1,522 @@
+{
+  "name": "tripilot-chat",
+  "displayName": "Tripilot Chat",
+  "description": "A Copilot Chat-like sidebar with tool calling via VS Code APIs.",
+  "version": "0.0.1",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:tripilot.chatView",
+    "onCommand:tripilot.debug.dumpLmModels",
+    "onCommand:tripilot.debug.diagnoseCopilotDirect",
+    "onCommand:tripilot.debug.showChatLogView",
+    "onCommand:tripilot.debug.searchCommands",
+    "onCommand:tripilot.debug.copySettingsPerfLog",
+    "onCommand:tripilot.copilotDirect.signOut",
+    "onCommand:tripilot.chat.open",
+    "onCommand:tripilot.chat.toggle",
+    "onCommand:tripilot.chat.openInEditor",
+    "onCommand:tripilot.chat.openInNewWindow",
+    "onCommand:tripilot.chat.resetViewDefaults",
+    "onCommand:tripilot.quickChat.toggle",
+    "onCommand:tripilot.copyModelIdsToClipboard",
+    "onCommand:tripilot.openSettings",
+    "onCommand:tripilot.exportChatHistory",
+    "onCommand:tripilot.chat.newSession",
+    "onCommand:tripilot.chat.selectSession"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "tripilot.debug.dumpLmModels",
+        "title": "Tripilot: Debug Dump LM Models"
+      },
+      {
+        "command": "tripilot.debug.diagnoseCopilotDirect",
+        "title": "Tripilot: Debug Diagnose Copilot Direct"
+      },
+      {
+        "command": "tripilot.debug.copySettingsPerfLog",
+        "title": "Tripilot: Debug Copy Settings Perf Log"
+      },
+      {
+        "command": "tripilot.copilotDirect.signOut",
+        "title": "Tripilot: Copilot Direct Sign Out"
+      },
+      {
+        "command": "tripilot.debug.showChatLogView",
+        "title": "Show Chat Debug View",
+        "category": "Developer"
+      },
+      {
+        "command": "tripilot.debug.searchCommands",
+        "title": "Tripilot: Debug Search Commands"
+      },
+      {
+        "command": "tripilot.chat.open",
+        "title": "Tripilot: Open Chat"
+      },
+      {
+        "command": "tripilot.chat.toggle",
+        "title": "Tripilot: Toggle Chat"
+      },
+      {
+        "command": "tripilot.chat.openInEditor",
+        "title": "Move Chat into Editor Area"
+      },
+      {
+        "command": "tripilot.chat.openInNewWindow",
+        "title": "Move Chat into New Window"
+      },
+      {
+        "command": "tripilot.chat.resetViewDefaults",
+        "title": "Reset View to Defaults"
+      },
+      {
+        "command": "tripilot.quickChat.toggle",
+        "title": "Tripilot: Open Quick Chat"
+      },
+      {
+        "command": "tripilot.copyModelIdsToClipboard",
+        "title": "Tripilot: Copy Model Ids to Clipboard"
+      },
+      {
+        "command": "tripilot.openSettings",
+        "title": "Tripilot: Open Settings"
+      },
+      {
+        "command": "tripilot.exportChatHistory",
+        "title": "Tripilot: Export Chat History"
+      },
+      {
+        "command": "tripilot.chat.newSession",
+        "title": "Tripilot: New Chat Session"
+      },
+      {
+        "command": "tripilot.chat.selectSession",
+        "title": "Tripilot: Select Chat Session"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "tripilot.chat.openInEditor",
+          "when": "view == tripilot.chatView",
+          "group": "2_move@0"
+        },
+        {
+          "command": "tripilot.chat.openInNewWindow",
+          "when": "view == tripilot.chatView",
+          "group": "2_move@1"
+        },
+        {
+          "command": "tripilot.quickChat.toggle",
+          "when": "view == tripilot.chatView",
+          "group": "1_open@4"
+        },
+        {
+          "command": "tripilot.chat.resetViewDefaults",
+          "when": "view == tripilot.chatView",
+          "group": "4_reset"
+        },
+        {
+          "command": "tripilot.debug.showChatLogView",
+          "when": "view == tripilot.chatView",
+          "group": "3_show"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "tripilot",
+          "title": "Tripilot",
+          "icon": "resources/tripilot.svg"
+        }
+      ]
+    },
+    "views": {
+      "tripilot": [
+        {
+          "id": "tripilot.chatView",
+          "name": "Chat",
+          "type": "webview",
+          "icon": "resources/tripilot.svg"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Tripilot Chat",
+      "properties": {
+        "tripilot.visibleModelIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Whitelist of model IDs shown in Tripilot's model picker. Empty = show all runtime models (plus Auto). Set to ['auto'] to only show Auto. Add real model ids (from picker / debug dump) to show a curated subset."
+        },
+        "tripilot.chatProvider": {
+          "type": "string",
+          "enum": [
+            "vscode-lm",
+            "copilot-direct",
+            "models-direct"
+          ],
+          "default": "vscode-lm",
+          "description": "Chat backend. vscode-lm uses VS Code Language Model API; copilot-direct uses GitHub auth + Copilot proxy endpoints; models-direct uses a self-hosted OpenAI-compatible server (/v1/models + /v1/chat/completions)."
+        },
+        "tripilot.copilotDirect.authMode": {
+          "type": "string",
+          "enum": [
+            "minimal",
+            "permissive"
+          ],
+          "default": "minimal",
+          "description": "GitHub authentication scopes mode for copilot-direct. If requests fail due to permissions, switch to permissive."
+        },
+        "tripilot.copilotDirect.deviceFlow.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Fallback to GitHub OAuth device flow when VS Code GitHub authentication is unavailable (common in VSCodium or restricted builds)."
+        },
+        "tripilot.copilotDirect.deviceFlow.clientId": {
+          "type": "string",
+          "default": "",
+          "description": "GitHub OAuth App Client ID used for device-flow fallback. Create your own OAuth App on GitHub and paste its Client ID here."
+        },
+        "tripilot.copilotDirect.tokenUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Override the GitHub Copilot token endpoint URL for copilot-direct (advanced / break-glass). Leave empty to use built-in defaults (copilot_internal v2 with fallbacks)."
+        },
+        "tripilot.modelsDirect.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Base URL for models-direct server. Example: http://127.0.0.1:8000 (expects /v1/models and /v1/chat/completions)."
+        },
+        "tripilot.modelsDirect.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API key for models-direct server (sent as Authorization: Bearer <apiKey>)."
+        },
+        "tripilot.modelsDirect.defaultModel": {
+          "type": "string",
+          "default": "",
+          "description": "Default model id for models-direct when selected model is Auto or unset."
+        },
+        "tripilot.modelsDirect.modelTagDefault": {
+          "type": "string",
+          "default": "",
+          "description": "Default modelTag to be sent to the models-direct server (if not provided by /v1/models and not overridden per model)."
+        },
+        "tripilot.modelsDirect.modelTags": {
+          "type": "object",
+          "default": {},
+          "description": "Per-model modelTag override map. Keys are model ids, values are tags like Anthropic/Google/Meta/grok/deepseek/glm/qwen.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "tripilot.modelsDirect.modelExtras": {
+          "type": "object",
+          "default": {},
+          "description": "Per-model modelExtra override map. Keys are model ids, values are arbitrary JSON objects passed through to the server.",
+          "additionalProperties": true
+        },
+        "tripilot.modelsDirect.extraFieldName": {
+          "type": "string",
+          "default": "tripilot",
+          "description": "Field name used to pass through extra metadata in request body. Tripilot sends { <extraFieldName>: { modelTag, modelExtra } }."
+        },
+        "tripilot.maxToolIterations": {
+          "type": "number",
+          "default": 6,
+          "minimum": 1,
+          "maximum": 20,
+          "description": "Max function-call iterations per user message."
+        },
+        "tripilot.chatHistory.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable local chat history logging to the extension's global storage (JSONL). Off by default for privacy."
+        },
+        "tripilot.chatHistory.exportGranularEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "When exporting chat history, allow selecting individual history entries (more fine-grained export)."
+        },
+        "tripilot.debug.settingsPerf": {
+          "type": "boolean",
+          "default": false,
+          "description": "Log Settings load timings to the 'Tripilot Settings Perf' output channel."
+        },
+        "tripilot.askStudySandboxDir": {
+          "type": "string",
+          "default": ".tripilot/ask-study",
+          "description": "Workspace-relative sandbox directory for ask&study. Write/apply-edits and execution tools are restricted to this directory in ask&study mode."
+        },
+        "tripilot.enabledBuiltinTools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "runSubagent",
+            "createDirectory",
+            "createFile",
+            "editFiles",
+            "editNotebook",
+            "newJupyterNotebook",
+            "createAndRunTask",
+            "runInTerminal",
+            "getTerminalOutput",
+            "runTask",
+            "runTests",
+            "testFailure",
+            "runNotebookCell",
+            "readFile",
+            "problems",
+            "terminalLastCommand",
+            "terminalSelection",
+            "getNotebookSummary",
+            "readNotebookCellOutput",
+            "getTaskOutput",
+            "fileSearch",
+            "textSearch",
+            "listDirectory",
+            "searchResults",
+            "codebase",
+            "usages",
+            "changes",
+            "manage_todo_list",
+            "extensions",
+            "installExtension",
+            "openSimpleBrowser",
+            "runCommand",
+            "newWorkspace",
+            "getProjectSetupInfo",
+            "vscodeAPI",
+            "fetch",
+            "githubRepo"
+          ],
+          "description": "Enabled built-in tools exposed to the model."
+        },
+        "tripilot.commandTools": {
+          "type": "array",
+          "default": [],
+          "description": "Custom command-backed tools (often provided by other extensions).",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "command",
+              "enabled"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Tool name used by #name and for model tool calling. Recommended: letters/numbers/_ only."
+              },
+              "command": {
+                "type": "string",
+                "description": "VS Code command id to execute."
+              },
+              "enabled": {
+                "type": "boolean",
+                "default": true
+              },
+              "description": {
+                "type": "string",
+                "description": "Optional description shown to the model."
+              }
+            }
+          }
+        },
+        "tripilot.agentProfiles": {
+          "type": "array",
+          "default": [],
+          "description": "Per-agent tool configuration. Each profile controls which built-in tools, command tools, and MCP servers are enabled when that agent is selected in chat.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Profile id (e.g. ask-study, edit-test, agent-vm)."
+              },
+              "name": {
+                "type": "string",
+                "description": "Display name shown in the agent menu."
+              },
+              "enabledBuiltinTools": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Enabled built-in tool names for this profile."
+              },
+              "enabledCommandTools": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Enabled command tool names for this profile (matches tripilot.commandTools[].name)."
+              },
+              "enabledMcpServers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Enabled MCP server ids for this profile (matches tripilot.mcpServers[].id)."
+              },
+              "editsEnableHealing": {
+                "type": "boolean",
+                "description": "Optional per-profile override for edits healing. If set, overrides tripilot.edits.enableHealing for this profile. ask&study always enables healing regardless of this setting."
+              }
+            }
+          }
+        },
+        "tripilot.hiddenCustomAgents": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Custom agent ids hidden from Tripilot's agents dropdown (similar to VS Code Copilot Chat Configure Custom Agents → eye icon)."
+        },
+    "tripilot.edits.approvalMode": {
+      "type": "string",
+      "enum": [
+        "post",
+        "pre"
+      ],
+      "default": "post",
+      "description": "Edits approval strategy. post = apply changes first, then offer Keep/Undo in chat (Copilot-like). pre = require Apply/Cancel approval before writing to disk. ask&study always requires pre-approval."
+    },
+    "tripilot.edits.sensitiveGlobs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [
+        "**/.env",
+        "**/.env.*",
+        "**/.git/**",
+        "**/.ssh/**",
+        "**/id_rsa",
+        "**/id_ed25519",
+        "**/*.pem",
+        "**/*.p12",
+        "**/*.pfx",
+        "**/*secret*",
+        "**/*token*",
+        "**/*key*"
+      ],
+      "description": "Workspace-relative glob patterns treated as sensitive; edits to these files require pre-approval even when approvalMode=post."
+    },
+    "tripilot.edits.enableHealing": {
+      "type": "boolean",
+      "default": false,
+      "description": "Enable conservative edit parameter healing for replace-string edits. When an edit oldString is not found, Tripilot may retry once using the closest unique similar snippet as oldString. ask&study always enables healing regardless of this setting."
+    },
+        "tripilot.mcpServers": {
+          "type": "array",
+          "default": [],
+          "description": "Configured MCP servers (stdio/http/websocket/sse).",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "transport",
+              "enabled"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Stable id used by @id."
+              },
+              "name": {
+                "type": "string",
+                "description": "Display name."
+              },
+              "enabled": {
+                "type": "boolean",
+                "default": true
+              },
+              "transport": {
+                "type": "string",
+                "enum": [
+                  "stdio",
+                  "http",
+                  "websocket",
+                  "sse"
+                ],
+                "description": "Connection transport."
+              },
+              "command": {
+                "type": "string",
+                "description": "For stdio: executable/command."
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": [],
+                "description": "For stdio: args array."
+              },
+              "cwd": {
+                "type": "string",
+                "description": "For stdio: working directory (optional)."
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "For stdio: environment overrides (string map)."
+              },
+              "url": {
+                "type": "string",
+                "description": "For http/websocket/sse: server URL."
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "npm run check:reference-tools && npm run check:tool-impl && tsc -p .",
+    "watch": "npm run check:reference-tools && npm run check:tool-impl && tsc -watch -p .",
+    "check:reference-tools": "node scripts/check-reference-tools.js",
+    "check:tool-impl": "node scripts/check-tool-implementations.js",
+    "package": "vsce package",
+    "lint": "echo 'No lint configured'"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@vscode/codicons": "^0.0.36",
+	"diff": "^8.0.2",
+    "sql.js": "^1.13.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+	"@types/diff": "^5.2.0",
+    "@types/vscode": "^1.96.0",
+    "typescript": "^5.5.4"
+  }
+}

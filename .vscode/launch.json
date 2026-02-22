@@ -1,0 +1,42 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Tripilot Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "runtimeExecutable": "${execPath}",
+      "args": [
+        "--disable-extension=Tencent-Cloud.coding-copilot",
+        "--disable-extension=saoudrizwan.claude-dev",
+        "--extensionDevelopmentPath=${workspaceFolder}"
+      ],
+      "preLaunchTask": "Tripilot: watch"
+    },
+    {
+      "name": "Run Tripilot Extension (Isolated Profile)",
+      "type": "extensionHost",
+      "request": "launch",
+      "runtimeExecutable": "${execPath}",
+      "args": [
+        "--user-data-dir=${workspaceFolder}/.vscode/.tripilot-dev-profile",
+        "--disable-extension=Tencent-Cloud.coding-copilot",
+        "--disable-extension=saoudrizwan.claude-dev",
+        "--extensionDevelopmentPath=${workspaceFolder}"
+      ],
+      "preLaunchTask": "Tripilot: watch"
+    },
+    {
+      "name": "Run Tripilot Extension (Disable Known Conflicts)",
+      "type": "extensionHost",
+      "request": "launch",
+      "runtimeExecutable": "${execPath}",
+      "args": [
+        "--disable-extension=Tencent-Cloud.coding-copilot",
+        "--disable-extension=saoudrizwan.claude-dev",
+        "--extensionDevelopmentPath=${workspaceFolder}"
+      ],
+      "preLaunchTask": "Tripilot: watch"
+    }
+  ]
+}

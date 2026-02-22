@@ -1,0 +1,1365 @@
+:root {
+  color-scheme: light dark;
+}
+
+html, body {
+  padding: 0 6px;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+}
+
+.app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.topbarLeft {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.topbarTitle {
+  font-weight: 600;
+}
+
+.topbarRight {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Checkpoints (Copilot-like divider) */
+.msg-checkpoint {
+  width: 100%;
+  margin: 8px 0;
+}
+
+.checkpointDivider {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 2px 0;
+  min-height: 24px;
+}
+
+.checkpointIconBtn {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.95;
+  border-radius: 6px;
+  cursor: pointer;
+  position: relative;
+  z-index: 2;
+}
+
+.checkpointIconBtn:hover {
+  background: var(--vscode-list-hoverBackground);
+  color: var(--vscode-foreground);
+  opacity: 1;
+}
+
+.checkpointIcon {
+  display: block;
+  width: 16px;
+  height: 16px;
+  opacity: 1;
+}
+
+/* Force a visible fill even if SVG currentColor inheritance is flaky */
+.checkpointIcon path {
+  fill: var(--vscode-foreground);
+}
+
+/* When hovering the divider (e.g. over the dashed line), make icon readable too */
+.checkpointDivider:hover .checkpointIconBtn,
+.checkpointDivider:focus-within .checkpointIconBtn {
+  opacity: 1;
+  color: var(--vscode-foreground);
+}
+
+.checkpointLine {
+  position: absolute;
+  left: 28px;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 0;
+  border-top: 1px dashed var(--vscode-descriptionForeground);
+  opacity: 0.55;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.checkpointDivider:hover .checkpointLine,
+.checkpointDivider:focus-within .checkpointLine {
+  opacity: 0.8;
+}
+
+.checkpointPill {
+  position: absolute;
+  left: 26px;
+  top: 50%;
+  transform: translateY(-50%) translateX(-2px);
+  opacity: 0;
+  pointer-events: none;
+  border: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-sideBar-background);
+  color: var(--vscode-foreground);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: opacity 120ms ease, transform 120ms ease;
+  z-index: 3;
+}
+
+.checkpointDivider:hover .checkpointPill,
+.checkpointDivider:focus-within .checkpointPill {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+  pointer-events: auto;
+}
+
+.checkpointPill:hover {
+  background: color-mix(in srgb, var(--vscode-editorWidget-background) 80%, var(--vscode-list-hoverBackground));
+}
+
+/* Redo toast (after restoring a checkpoint) */
+.redoToast {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: 64px;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-editorWidget-background);
+  color: var(--vscode-foreground);
+  border-radius: 10px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+}
+
+.redoToast.hidden {
+  display: none;
+}
+
+.redoToastText {
+  font-size: 12px;
+  color: var(--vscode-foreground);
+  opacity: 0.9;
+}
+
+.redoToastActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.topbarRight button.icon .codicon-chevron-down {
+  font-size: 12px;
+  margin-left: 2px;
+}
+
+.sessions {
+  padding: 8px 10px 10px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.sessionNav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.sessionNavTitle {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sessionsHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.sessionsHeaderLeft {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--vscode-descriptionForeground);
+}
+
+.sessionsHeaderRight {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.sessionsList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sessionRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.sessionRow:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.sessionRow.isActive {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+
+.sessionMain {
+  flex: 1;
+  min-width: 0;
+}
+
+.sessionTitle {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sessionMeta {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sessionRow.isActive .sessionMeta {
+  color: var(--vscode-list-activeSelectionForeground);
+  opacity: 0.9;
+}
+
+.sessionActions {
+  display: flex;
+  align-items: center;
+}
+
+.sessionDelete,
+.sessionArchive {
+  opacity: 0;
+}
+
+.sessionRow:hover .sessionDelete,
+.sessionRow:hover .sessionArchive {
+  opacity: 1;
+}
+
+.tempSessionToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  border-radius: 999px;
+  padding: 0 4px;
+  user-select: none;
+  min-width: 0;
+  max-width: 140px;
+  overflow: hidden;
+  flex: 0 1 auto;
+}
+
+.tempSessionToggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.tempSessionPill {
+  font-size: 11px;
+  padding: 0 6px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+	min-width: 0;
+	max-width: 100%;
+	width: 100%;
+	flex: 1 1 auto;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* OFF (saving) */
+.tempSessionToggle input:not(:checked) + .tempSessionPill {
+  background: transparent;
+  border-color: var(--vscode-input-border);
+  color: var(--vscode-descriptionForeground);
+}
+
+/* ON (temporary) – theme-driven greenish */
+.tempSessionToggle input:checked + .tempSessionPill {
+  background: var(--vscode-charts-green, var(--vscode-terminal-ansiGreen, var(--vscode-button-background)));
+  color: var(--vscode-button-foreground);
+}
+
+.sessionsToggle {
+  margin-top: 10px;
+  width: 100%;
+  text-align: center;
+  padding: 6px 8px;
+  border-radius: 8px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.title {
+  font-weight: 600;
+}
+
+.messages {
+  flex: 1;
+  overflow: auto;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+  z-index: 0;
+  min-height: 0;
+}
+
+.hidden {
+  display: none;
+}
+
+.approval {
+  padding: 10px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-editorWidget-background);
+}
+
+.approval-text {
+  font-size: 12px;
+  color: var(--vscode-foreground);
+  margin-bottom: 6px;
+}
+
+.approval-files {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  white-space: pre-wrap;
+  margin-bottom: 8px;
+}
+
+.approval-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.msg {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.badge {
+  width: 44px;
+  flex: 0 0 44px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  padding-top: 6px;
+}
+
+.body {
+  max-width: 100%;
+  min-width: 0;
+  white-space: pre-wrap;
+  line-height: 1.45;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-editorWidget-background);
+}
+
+.msg-user {
+  justify-content: flex-end;
+}
+
+.msg-user .badge {
+  display: none;
+}
+
+.msg-user .body {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border-color: var(--vscode-button-border, transparent);
+}
+
+.msg-assistant .body {
+  width: 100%;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+/* Copilot-like: assistant replies have no username label */
+.msg-assistant .badge {
+  display: none;
+}
+
+.msg-checkpoint {
+  justify-content: center;
+}
+
+.msg-checkpoint .badge {
+  display: none;
+}
+
+.msg-checkpoint .body {
+  width: 100%;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.checkpointCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px dashed var(--vscode-panel-border);
+  background: var(--vscode-editorWidget-background);
+}
+
+.checkpointText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.checkpointTitle {
+  font-size: 12px;
+  color: var(--vscode-foreground);
+  font-weight: 600;
+  user-select: none;
+}
+
+.checkpointDesc {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  user-select: none;
+}
+
+.checkpointActions {
+  flex: 0 0 auto;
+}
+
+.checkpointActions button {
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  cursor: pointer;
+}
+
+.checkpointActions button:hover {
+  filter: brightness(1.05);
+}
+
+/* --- Modal (Copilot-like) --- */
+.modalRoot {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+}
+
+.modalRoot.hidden {
+  display: none;
+}
+
+.modalBackdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.modalDialog {
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  transform: translate(-50%, 0);
+  width: min(520px, calc(100vw - 32px));
+  border-radius: 12px;
+  border: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-editorWidget-background);
+  color: var(--vscode-foreground);
+  padding: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+.modalTitle {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.modalMessage {
+  font-size: 12px;
+  color: var(--vscode-foreground);
+  white-space: pre-wrap;
+  line-height: 1.45;
+}
+
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.modalActions button {
+  padding: 4px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  cursor: pointer;
+}
+
+.modalActions button.ghost {
+  background: transparent;
+  border-color: var(--vscode-panel-border);
+  color: var(--vscode-foreground);
+}
+
+.modalActions button:hover {
+  filter: brightness(1.05);
+}
+
+/* Markdown styling */
+.md {
+  white-space: normal;
+}
+
+.md p {
+  margin: 0 0 10px 0;
+  text-align: justify;
+  text-justify: inter-word;
+}
+
+.md p:last-child {
+  margin-bottom: 0;
+}
+
+.md h1, .md h2, .md h3, .md h4, .md h5, .md h6 {
+  margin: 14px 0 8px 0;
+  font-weight: 600;
+}
+
+.md ul, .md ol {
+  margin: 0 0 10px 20px;
+  padding: 0;
+}
+
+.md li {
+  margin: 4px 0;
+}
+
+.md blockquote {
+  margin: 8px 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--vscode-panel-border);
+  color: var(--vscode-descriptionForeground);
+}
+
+.md code {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 12px;
+  background: var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.15));
+  padding: 1px 4px;
+  border-radius: 6px;
+}
+
+.md pre {
+  margin: 8px 0;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-textCodeBlock-background, var(--vscode-editor-background));
+  overflow: auto;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.md pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.msg-tool .badge {
+  display: none;
+}
+
+.msg-tool {
+  justify-content: flex-start;
+}
+
+.msg-tool .body {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  background: transparent;
+  border-style: dashed;
+}
+
+/* --- Structured parts (Copilot-like) --- */
+.msg-part .badge {
+  display: none;
+}
+
+.body-rich {
+  white-space: normal;
+}
+
+.partTitle {
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  margin-bottom: 6px;
+  user-select: none;
+}
+
+.toolGroup {
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 10px;
+  background: var(--vscode-editorWidget-background);
+  padding: 6px 8px;
+}
+
+.toolGroupSummary {
+  cursor: pointer;
+  color: var(--vscode-foreground);
+  list-style: none;
+}
+
+.toolGroupSummary::-webkit-details-marker {
+  display: none;
+}
+
+.toolGroupList {
+  margin-top: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.toolInvocation {
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: var(--vscode-input-background);
+}
+
+.toolInvocationSummary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  list-style: none;
+}
+
+.toolInvocationSummary::-webkit-details-marker {
+  display: none;
+}
+
+.toolName {
+  font-family: var(--vscode-font-family);
+  font-size: 12px;
+  color: var(--vscode-foreground);
+}
+
+.toolStatus {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.toolStatus-ok {
+  color: var(--vscode-testing-iconPassed, var(--vscode-charts-green, #2ea043));
+}
+
+.toolStatus-error {
+  color: var(--vscode-testing-iconFailed, var(--vscode-charts-red, #f85149));
+}
+
+.toolCode {
+  margin: 6px 0 0 0;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-editor-background);
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-editor-font-family);
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow: auto;
+  max-width: 100%;
+  box-sizing: border-box;
+  max-height: 260px;
+}
+
+.todoNote {
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.todoGroup {
+  margin: 0;
+  padding: 0;
+}
+
+.todoGroup > summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+  margin-bottom: 6px;
+}
+
+.todoGroup > summary::-webkit-details-marker {
+  display: none;
+}
+
+.todoGroupSummary::before {
+  content: '▾';
+  display: inline-block;
+  width: 14px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.todoGroup:not([open]) .todoGroupSummary::before {
+  content: '▸';
+}
+
+.todoGroupList {
+  margin-left: 14px;
+}
+
+.todoItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 0;
+  border-top: 1px dashed var(--vscode-panel-border);
+}
+
+.todoItem:first-of-type {
+  border-top: none;
+}
+
+.todoItemTitle {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+  width: 100%;
+}
+
+.todoIcon {
+  margin-top: 1px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.todoIcon-done {
+  color: var(--vscode-testing-iconPassed, var(--vscode-charts-green, #2ea043));
+}
+
+.todoIcon-progress {
+  color: var(--vscode-charts-yellow, #d29922);
+}
+
+.todoIcon-todo {
+  color: var(--vscode-descriptionForeground);
+}
+
+.todoItemStatus {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.todoItemDesc {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  white-space: pre-wrap;
+}
+
+.editsSummary {
+  font-size: 12px;
+  color: var(--vscode-foreground);
+  margin-bottom: 6px;
+}
+
+.editsFiles {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  white-space: pre-wrap;
+  margin-bottom: 8px;
+}
+
+.editsStatLine {
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  margin: 2px 0 10px 0;
+}
+
+.editsActions {
+  display: flex;
+  gap: 8px;
+}
+
+.composer {
+  padding: 10px;
+  border-top: 1px solid var(--vscode-panel-border);
+  position: relative;
+  z-index: 20;
+}
+
+.composerBox {
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 10px;
+  background: var(--vscode-input-background);
+  padding: 8px;
+  position: relative;
+  /* Establish a local stacking context so dropdown z-index ordering is reliable above the textarea. */
+  z-index: 0;
+}
+
+.composerBox:focus-within {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+
+textarea {
+  width: 100%;
+  resize: none;
+  border: none;
+  outline: none;
+  padding: 0;
+  margin: 0;
+  color: var(--vscode-input-foreground);
+  background: transparent;
+  line-height: 1.35;
+  min-height: 40px;
+  max-height: 160px;
+  overflow: auto;
+  /* Ensure the suggestion dropdown can render above the textarea. */
+  position: relative;
+  z-index: 1;
+}
+
+textarea:disabled {
+	opacity: 0.7;
+	cursor: not-allowed;
+}
+
+.composerTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  margin-bottom: 6px;
+  gap: 8px;
+}
+
+.contextButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: auto;
+  height: 28px;
+  padding: 0 10px;
+  gap: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--vscode-input-border);
+  background: transparent;
+  color: var(--vscode-foreground);
+}
+
+/* Copilot-like: once there are prompt tokens, the button collapses to icon-only. */
+.composerTop.hasTokens .contextButton {
+  width: 28px;
+  padding: 0;
+  justify-content: center;
+  gap: 0;
+}
+
+.composerTop.hasTokens .contextButtonText {
+  display: none;
+}
+
+.composerTokens {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.toolChips {
+  margin-top: 0;
+  opacity: 0.95;
+}
+
+.toolChips:empty {
+  display: none;
+}
+
+.chipTool {
+  background: color-mix(in srgb, var(--vscode-badge-background) 65%, transparent);
+}
+
+.chipBadge {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--vscode-descriptionForeground);
+  border: 1px solid var(--vscode-panel-border);
+  background: color-mix(in srgb, var(--vscode-editorWidget-background) 70%, transparent);
+}
+
+.contextButtonText {
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+}
+
+.contextChips {
+  display: flex;
+  gap: 6px;
+  overflow: hidden;
+  padding-bottom: 0;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.hashSuggest {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  z-index: 10;
+  pointer-events: auto;
+  border: 1px solid var(--vscode-widget-border);
+  background: var(--vscode-editorWidget-background);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  padding: 6px;
+  max-height: 240px;
+  overflow: auto;
+  /* Nudge into its own composited layer to avoid odd hit-testing cases in webviews. */
+  transform: translateZ(0);
+}
+
+.hashSuggest.hidden {
+  display: none;
+}
+
+.hashSuggestItem {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--vscode-foreground);
+  text-align: left;
+  cursor: pointer;
+}
+
+.hashSuggestItem:hover,
+.hashSuggestItem.active {
+  background: color-mix(in srgb, var(--vscode-list-hoverBackground) 85%, transparent);
+  border-color: color-mix(in srgb, var(--vscode-focusBorder) 55%, transparent);
+}
+
+.hashSuggestLeft {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.hashSuggestLabel {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hashSuggestDetail {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 55%;
+  text-align: right;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--vscode-button-background) 35%, var(--vscode-panel-border));
+  background: color-mix(in srgb, var(--vscode-button-background) 18%, transparent);
+  color: var(--vscode-foreground);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.chipIcon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--vscode-descriptionForeground);
+}
+
+.chipText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chipRemove {
+  border: none;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  font-size: 14px;
+}
+
+.chipRemove:hover {
+  color: var(--vscode-foreground);
+}
+
+
+.composerBottom {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  margin-top: 6px;
+  width: 100%;
+  gap: 4px;
+}
+
+.bottomLeft,
+.bottomCenter,
+.bottomRight {
+  display: flex;
+  align-items: center;
+}
+
+.bottomLeft {
+  gap: 4px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.bottomCenter {
+	flex: 1 1 auto;
+	min-width: 0;
+	justify-content: center;
+	overflow: hidden;
+}
+
+.bottomRight {
+  gap: 4px;
+}
+
+.bottomRight {
+	flex: 0 0 auto;
+}
+
+.menuButton {
+  height: 24px;
+  padding: 0 2px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  max-width: 220px;
+  overflow: hidden;
+  /* Do not expand with width; allow shrinking + ellipsis on narrow views. */
+  flex: 0 1 auto;
+}
+
+.menuLabel {
+  font-size: 11px;
+  display: inline-block;
+  min-width: 0;
+  max-width: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Chevron is visually smaller in Copilot Chat */
+.menuButton .codicon.codicon-chevron-down {
+  font-size: 12px;
+}
+
+button.icon {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.codicon {
+  font-size: 15px;
+  line-height: 1;
+}
+
+
+/* Ghost buttons */
+button.ghost {
+  background: transparent;
+  color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-input-border);
+}
+
+button.ghost:hover {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-button-hoverBackground));
+}
+
+.send {
+  background: transparent;
+  border: 1px solid transparent;
+}
+
+/* Busy -> Stop state (more obvious, still theme-driven) */
+.send.isStop {
+	border-color: var(--vscode-errorForeground);
+	background: var(--vscode-inputValidation-errorBackground, transparent);
+}
+
+/* Make bottom-row controls less "boxed" (closer to Copilot Chat) */
+.composerBox .menuButton.ghost,
+.composerBox .bottomLeft button.icon.ghost,
+.composerBox .bottomRight button.icon.ghost,
+.composerBox .bottomRight button.icon.send {
+  border-color: transparent;
+  background: transparent;
+}
+
+.composerBox .menuButton.ghost:hover,
+.composerBox .bottomLeft button.icon.ghost:hover,
+.composerBox .bottomRight button.icon.ghost:hover,
+.composerBox .bottomRight button.icon.send:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+/* Menus */
+.menu {
+  position: absolute;
+  bottom: 46px;
+  left: 8px;
+  min-width: 160px;
+  box-sizing: border-box;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border));
+  background: var(--vscode-editorWidget-background);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  z-index: 1000;
+
+  /* Prevent the menu from growing beyond the view (lots of models). */
+  max-height: 320px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+
+/* Model picker can contain very long model names; constrain width to the visible webview.
+   If the menu grows wider than the view, the host will clip it against the editor area. */
+.menu.menuModel {
+  width: min(360px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+}
+
+/* Topbar menus are anchored near the top, not the composer. */
+.menu.menuTop {
+  bottom: auto;
+  top: 36px;
+}
+
+.menuItem {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--vscode-foreground);
+  min-width: 0;
+  text-align: left;
+}
+
+.menuItemLabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.menuItemMeta {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.menuItem:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.menuDivider {
+  height: 1px;
+  margin: 6px 2px;
+  background: var(--vscode-panel-border);
+}
+
+.menuCheck {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: 8px;
+  color: var(--vscode-foreground);
+  font-size: 12px;
+}
+
+.menuCheck:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+button {
+  padding: 6px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+button.ghost {
+  background: transparent;
+  color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-input-border);
+}
+
+.status {
+  display: none;
+  padding: 0;
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+}
+
+.status:not(:empty) {
+  display: block;
+  padding: 0 10px 8px 10px;
+}
