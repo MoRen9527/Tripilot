@@ -5898,6 +5898,13 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 					next.traceId = undefined;
 					next.totalRecords = 0;
 					this.stopReplayCadence(state);
+				} else if (cmd === 'config') {
+					next.cadenceMs = cadenceMs ?? next.cadenceMs ?? 850;
+					next.totalRecords = total ?? next.totalRecords ?? 0;
+					next.sessionId = sid ?? next.sessionId;
+					next.traceId = tid ?? next.traceId;
+					next.cursor = cur;
+					if (next.active && next.playing) this.startReplayCadence(state);
 				}
 
 				state.replayState = next;

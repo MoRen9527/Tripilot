@@ -289,6 +289,7 @@
   let replayTraceInputEl = null;
   let replayPlayBtnEl = null;
   let replayStopBtnEl = null;
+  let replayCadenceInputEl = null;
   let replayScrubEl = null;
   let replayListEl = null;
   let replayHintEl = null;
@@ -609,6 +610,33 @@
       renderReplayConsole();
     });
 
+    const cadenceWrap = document.createElement('label');
+    cadenceWrap.className = 'replayCadence';
+    cadenceWrap.textContent = 'cadence';
+
+    replayCadenceInputEl = document.createElement('input');
+    replayCadenceInputEl.type = 'number';
+    replayCadenceInputEl.min = '250';
+    replayCadenceInputEl.max = '3000';
+    replayCadenceInputEl.step = '50';
+    replayCadenceInputEl.className = 'replayCadenceInput';
+    replayCadenceInputEl.value = String(replayHostState.cadenceMs || 850);
+    replayCadenceInputEl.title = '回放节拍（毫秒）';
+    replayCadenceInputEl.addEventListener('change', () => {
+      const raw = Number(replayCadenceInputEl?.value || '850');
+      const nextMs = Number.isFinite(raw) ? Math.max(250, Math.min(3000, Math.floor(raw))) : 850;
+      replayHostState.cadenceMs = nextMs;
+      if (replayCadenceInputEl) replayCadenceInputEl.value = String(nextMs);
+      emitReplayControl('config', {
+        cursor: replayState.cursor,
+        sessionId: replayState.loadedSessionId,
+        traceId: replayState.loadedTraceId,
+        cadenceMs: nextMs
+      });
+      renderReplayConsole();
+    });
+    cadenceWrap.appendChild(replayCadenceInputEl);
+
     replayScrubEl = document.createElement('input');
     replayScrubEl.type = 'range';
     replayScrubEl.min = '0';
@@ -635,6 +663,7 @@
 
     replayControls.appendChild(replayPlayBtnEl);
     replayControls.appendChild(replayStopBtnEl);
+    replayControls.appendChild(cadenceWrap);
     replayControls.appendChild(replayScrubEl);
 
     replayHintEl = document.createElement('div');
@@ -776,7 +805,7 @@
         ? 'Resume'
         : 'Play';
     replayHintEl.textContent = rows.length
-      ? `records=${rows.length} · cursor=${Math.min(rows.length, replayState.cursor + 1)}/${rows.length}`
+      ? `records=${rows.length} · cursor=${Math.min(rows.length, replayState.cursor + 1)}/${rows.length} · cadence=${replayHostState.cadenceMs}ms`
       : '未加载回放记录。请输入 sessionId/traceId 后点击 Load。';
 
     replayListEl.innerHTML = '';
@@ -2496,6 +2525,7 @@
         replayHostState.traceId = String(msg.traceId || '');
         replayHostState.totalRecords = Number.isFinite(Number(msg.totalRecords)) ? Math.max(0, Math.floor(Number(msg.totalRecords))) : 0;
         replayHostState.cadenceMs = Number.isFinite(Number(msg.cadenceMs)) ? Math.max(250, Math.floor(Number(msg.cadenceMs))) : 850;
+        if (replayCadenceInputEl) replayCadenceInputEl.value = String(replayHostState.cadenceMs);
         replayState.playing = replayHostState.playing;
         if (Number.isFinite(replayHostState.cursor)) replayState.cursor = Number(replayHostState.cursor);
         clampReplayCursor();

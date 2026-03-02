@@ -539,6 +539,25 @@ body {
   font-size: 11px;
 }
 
+.replayCadence {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+}
+
+.replayCadenceInput {
+  width: 64px;
+  border: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border-radius: 6px;
+  padding: 1px 4px;
+  font-size: 11px;
+}
+
 .replayScrub {
   flex: 1;
   min-width: 0;
