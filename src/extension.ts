@@ -422,6 +422,20 @@ type WebviewOutboundMessageExtended =
 				locked: boolean;
 				totalRecords?: number;
 				cadenceMs?: number;
+		  }
+	| {
+				type: 'sceneState';
+				machineState: 'idle' | 'working' | 'waiting' | 'failed';
+				reason?: string;
+				updatedAt: number;
+				workstations: Array<{
+					id: string;
+					label: string;
+					state: 'idle' | 'working' | 'waiting' | 'failed';
+					nodeId?: string;
+					eventId?: string;
+					kind: 'subagent' | 'approval';
+				}>;
 		  };
 
 type WorkspaceCustomAgentInfo = {
@@ -508,6 +522,19 @@ type ChatHostState = {
 		cadenceMs?: number;
 	};
 	replayCadenceTimer?: NodeJS.Timeout;
+	sceneState?: {
+		machineState: 'idle' | 'working' | 'waiting' | 'failed';
+		reason?: string;
+		updatedAt: number;
+		workstations: Array<{
+			id: string;
+			label: string;
+			state: 'idle' | 'working' | 'waiting' | 'failed';
+			nodeId?: string;
+			eventId?: string;
+			kind: 'subagent' | 'approval';
+		}>;
+	};
 };
 
 
@@ -5606,6 +5633,83 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		}
 
 		this.postToHost(state, { type: 'subagentTree', nodes });
+		this.postSceneState(state, nodes);
+	}
+
+	private postSceneState(
+		state: ChatHostState,
+		nodes: Array<{
+			id: string;
+			parentId: string | null;
+			label: string;
+			type: 'main' | 'subagent';
+			status: 'idle' | 'working' | 'done' | 'error';
+			sessionId?: string;
+			traceId?: string;
+			eventId?: string;
+			eventSeq?: number;
+		}>
+	): void {
+		const hasFailed = nodes.some((n) => n.type === 'subagent' && n.status === 'error');
+		const hasWorking = nodes.some((n) => n.type === 'subagent' && n.status === 'working');
+		const hasWaitingApproval =
+			!!this.pendingEditApproval &&
+			(this.pendingEditApproval.originHost === state.kind || this.pendingEditApproval.originHost === 'sidebar');
+
+		let machineState: 'idle' | 'working' | 'waiting' | 'failed' = 'idle';
+		let reason = 'no-active-signals';
+		if (hasFailed) {
+			machineState = 'failed';
+			reason = 'subagent-error';
+		} else if (hasWaitingApproval) {
+			machineState = 'waiting';
+			reason = 'approval-pending';
+		} else if (state.isBusy || hasWorking) {
+			machineState = 'working';
+			reason = state.isBusy ? 'host-busy' : 'subagent-working';
+		}
+
+		const workstations: Array<{
+			id: string;
+			label: string;
+			state: 'idle' | 'working' | 'waiting' | 'failed';
+			nodeId?: string;
+			eventId?: string;
+			kind: 'subagent' | 'approval';
+		}> = [];
+
+		for (const n of nodes) {
+			if (n.type !== 'subagent') continue;
+			const mapped: 'idle' | 'working' | 'waiting' | 'failed' =
+				n.status === 'error' ? 'failed' : n.status === 'working' ? 'working' : 'idle';
+			workstations.push({
+				id: n.id,
+				label: n.label,
+				state: mapped,
+				nodeId: n.id,
+				eventId: n.eventId,
+				kind: 'subagent'
+			});
+		}
+
+		if (hasWaitingApproval && this.pendingEditApproval) {
+			workstations.unshift({
+				id: `approval.${this.pendingEditApproval.requestId}`,
+				label: 'Approval Gate',
+				state: 'waiting',
+				eventId: this.pendingEditApproval.requestId,
+				kind: 'approval'
+			});
+		}
+
+		const next = {
+			machineState,
+			reason,
+			updatedAt: Date.now(),
+			workstations
+		};
+		state.sceneState = next;
+		this.postToHost(state, { type: 'sceneState', ...next });
 	}
 
 	private postReplayState(state: ChatHostState): void {
@@ -5836,6 +5940,9 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 
 			case 'requestReplayState': {
 				this.postReplayState(state);
+				if (state.sceneState) {
+					this.postToHost(state, { type: 'sceneState', ...state.sceneState });
+				}
 				return;
 			}
 

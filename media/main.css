@@ -505,6 +505,57 @@ body {
   border-top: 1px dashed var(--vscode-panel-border);
 }
 
+.sceneState {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--vscode-panel-border);
+}
+
+.sceneStateHeader {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--vscode-descriptionForeground);
+  margin-bottom: 6px;
+}
+
+.sceneStateSummary {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  margin-bottom: 6px;
+}
+
+.sceneStateList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sceneStateRow {
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-size: 11px;
+  color: var(--vscode-foreground);
+}
+
+.sceneStateRow.is-working {
+  border-color: var(--vscode-focusBorder);
+}
+
+.sceneStateRow.is-waiting {
+  border-color: var(--vscode-testing-iconQueued);
+}
+
+.sceneStateRow.is-failed {
+  border-color: var(--vscode-inputValidation-errorBorder);
+}
+
+.sceneStateEmpty {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
 .replayHeader {
   font-size: 11px;
   letter-spacing: 0.08em;

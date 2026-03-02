@@ -284,6 +284,9 @@
   let subagentTreeStatusEl = null;
   let subagentTreeFocusPathBtnEl = null;
   let subagentTreeStatsEl = null;
+  let sceneWrapEl = null;
+  let sceneSummaryEl = null;
+  let sceneListEl = null;
   let replayWrapEl = null;
   let replaySessionInputEl = null;
   let replayTraceInputEl = null;
@@ -298,6 +301,12 @@
   let subagentTreeScope = 'all';
   let subagentTreeStatus = 'all';
   const collapsedSubagentNodeIdsBySession = new Map();
+  const sceneState = {
+    machineState: 'idle',
+    reason: 'init',
+    updatedAt: 0,
+    workstations: []
+  };
   const replayState = {
     records: [],
     cursor: 0,
@@ -537,6 +546,24 @@
     subagentTreeWrapEl.appendChild(subagentTreeListEl);
     subagentTreeWrapEl.appendChild(subagentTreeDetailEl);
 
+    sceneWrapEl = document.createElement('div');
+    sceneWrapEl.className = 'sceneState';
+
+    const sceneHeader = document.createElement('div');
+    sceneHeader.className = 'sceneStateHeader';
+    sceneHeader.textContent = 'SCENE STATE (MVP)';
+
+    sceneSummaryEl = document.createElement('div');
+    sceneSummaryEl.className = 'sceneStateSummary';
+
+    sceneListEl = document.createElement('div');
+    sceneListEl.className = 'sceneStateList';
+
+    sceneWrapEl.appendChild(sceneHeader);
+    sceneWrapEl.appendChild(sceneSummaryEl);
+    sceneWrapEl.appendChild(sceneListEl);
+    subagentTreeWrapEl.appendChild(sceneWrapEl);
+
     replayWrapEl = document.createElement('div');
     replayWrapEl.className = 'replayConsole';
 
@@ -680,8 +707,34 @@
 
     subagentTreeWrapEl.appendChild(replayWrapEl);
     sessionsEl.appendChild(subagentTreeWrapEl);
+    renderSceneStatePanel();
     renderReplayConsole();
     return subagentTreeWrapEl;
+  }
+
+  function renderSceneStatePanel() {
+    if (!sceneSummaryEl || !sceneListEl) return;
+    const machine = String(sceneState.machineState || 'idle');
+    const reason = String(sceneState.reason || 'n/a');
+    const stations = Array.isArray(sceneState.workstations) ? sceneState.workstations : [];
+    sceneSummaryEl.textContent = `machine=${machine} · reason=${reason} · stations=${stations.length}`;
+
+    sceneListEl.innerHTML = '';
+    if (!stations.length) {
+      const empty = document.createElement('div');
+      empty.className = 'sceneStateEmpty';
+      empty.textContent = '暂无工位映射（等待事件）。';
+      sceneListEl.appendChild(empty);
+      return;
+    }
+
+    for (const station of stations.slice(0, 8)) {
+      const row = document.createElement('div');
+      row.className = `sceneStateRow is-${String(station?.state || 'idle')}`;
+      row.textContent = `${String(station?.label || station?.id || 'station')} · ${String(station?.state || 'idle')}`;
+      row.title = `kind=${String(station?.kind || 'subagent')} event=${String(station?.eventId || '-')}`;
+      sceneListEl.appendChild(row);
+    }
   }
 
   function flattenSubagentNodes(nodes, parentId, depth, out) {
@@ -2512,6 +2565,15 @@
       case 'subagentTree':
         subagentTreeNodes = Array.isArray(msg.nodes) ? msg.nodes : [];
         renderSubagentTree();
+        renderSceneStatePanel();
+        return;
+
+      case 'sceneState':
+        sceneState.machineState = String(msg.machineState || 'idle');
+        sceneState.reason = String(msg.reason || 'n/a');
+        sceneState.updatedAt = Number.isFinite(Number(msg.updatedAt)) ? Number(msg.updatedAt) : Date.now();
+        sceneState.workstations = Array.isArray(msg.workstations) ? msg.workstations : [];
+        renderSceneStatePanel();
         return;
 
       case 'replayState':
