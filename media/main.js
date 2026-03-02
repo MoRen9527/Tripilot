@@ -288,6 +288,7 @@
   let replaySessionInputEl = null;
   let replayTraceInputEl = null;
   let replayPlayBtnEl = null;
+  let replayStopBtnEl = null;
   let replayScrubEl = null;
   let replayListEl = null;
   let replayHintEl = null;
@@ -318,6 +319,11 @@
       action,
       ...(payload || {})
     });
+  }
+
+  function clampReplayCursor() {
+    const max = Math.max(0, replayState.records.length - 1);
+    replayState.cursor = Math.min(max, Math.max(0, Number(replayState.cursor || 0)));
   }
 
   function getNodeSessionKey(node) {
@@ -580,6 +586,21 @@
       renderReplayConsole();
     });
 
+    replayStopBtnEl = document.createElement('button');
+    replayStopBtnEl.type = 'button';
+    replayStopBtnEl.className = 'replayAction ghost';
+    replayStopBtnEl.textContent = 'Stop';
+    replayStopBtnEl.addEventListener('click', () => {
+      stopReplayTimer();
+      replayState.cursor = 0;
+      postReplayControl('stop', {
+        sessionId: replayState.loadedSessionId,
+        traceId: replayState.loadedTraceId
+      });
+      uiAction('requestSubagentTree');
+      renderReplayConsole();
+    });
+
     replayScrubEl = document.createElement('input');
     replayScrubEl.type = 'range';
     replayScrubEl.min = '0';
@@ -600,6 +621,7 @@
     });
 
     replayControls.appendChild(replayPlayBtnEl);
+    replayControls.appendChild(replayStopBtnEl);
     replayControls.appendChild(replayScrubEl);
 
     replayHintEl = document.createElement('div');
@@ -689,6 +711,7 @@
     const tid = String(args?.traceId || '').trim();
     const list = Array.isArray(subagentTreeNodes) ? subagentTreeNodes : [];
     const rows = [];
+    let sourceIndex = 0;
     for (const node of list) {
       if (String(node?.type || '') !== 'subagent') continue;
       const nodeSid = String(node?.sessionId || '').trim();
@@ -705,10 +728,21 @@
         traceId: nodeTid,
         eventId,
         status: String(node?.status || 'unknown'),
-        seq
+        seq,
+        sourceIndex
       });
+      sourceIndex += 1;
     }
-    rows.sort((a, b) => a.seq - b.seq || a.eventId.localeCompare(b.eventId));
+    rows.sort((a, b) => {
+      if (a.seq !== b.seq) return a.seq - b.seq;
+      if (a.sessionId !== b.sessionId) return a.sessionId.localeCompare(b.sessionId);
+      if (a.traceId !== b.traceId) return a.traceId.localeCompare(b.traceId);
+      if (a.eventId !== b.eventId) return a.eventId.localeCompare(b.eventId);
+      const aid = String(a?.node?.id || '');
+      const bid = String(b?.node?.id || '');
+      if (aid !== bid) return aid.localeCompare(bid);
+      return a.sourceIndex - b.sourceIndex;
+    });
     return rows;
   }
 
@@ -720,7 +754,12 @@
     replayScrubEl.value = String(Math.min(max, Math.max(0, replayState.cursor || 0)));
     replayScrubEl.disabled = rows.length === 0;
     replayPlayBtnEl.disabled = rows.length <= 1;
-    replayPlayBtnEl.textContent = replayState.playing ? 'Pause' : 'Play';
+    if (replayStopBtnEl) replayStopBtnEl.disabled = !replayHostState.active;
+    replayPlayBtnEl.textContent = replayState.playing
+      ? 'Pause'
+      : replayHostState.active && replayHostState.locked
+        ? 'Resume'
+        : 'Play';
     replayHintEl.textContent = rows.length
       ? `records=${rows.length} · cursor=${Math.min(rows.length, replayState.cursor + 1)}/${rows.length}`
       : '未加载回放记录。请输入 sessionId/traceId 后点击 Load。';
@@ -780,6 +819,12 @@
     replayState.loadedSessionId = sid;
     replayState.loadedTraceId = tid;
     stopReplayTimer();
+    if (!replayState.records.length) {
+      postReplayControl('stop', { sessionId: sid, traceId: tid });
+      uiAction('requestSubagentTree');
+      renderReplayConsole();
+      return;
+    }
     postReplayControl('load', {
       cursor: replayState.cursor,
       sessionId: sid,
@@ -2433,7 +2478,7 @@
           sessions: Array.isArray(msg.sessions) ? msg.sessions : []
         };
         renderSessions();
-        uiAction('requestSubagentTree');
+        if (!replayHostState.active) uiAction('requestSubagentTree');
         renderSubagentTree();
         return;
 
@@ -2449,9 +2494,14 @@
         replayHostState.locked = !!msg.locked;
         replayHostState.sessionId = String(msg.sessionId || '');
         replayHostState.traceId = String(msg.traceId || '');
+        replayState.playing = replayHostState.playing;
+        if (Number.isFinite(replayHostState.cursor)) replayState.cursor = Number(replayHostState.cursor);
+        clampReplayCursor();
+        if (!replayHostState.active) stopReplayTimer();
         if (replayHintEl && replayHostState.active) {
           replayHintEl.textContent = `host-replay: active · ${replayHostState.playing ? 'playing' : 'paused'} · cursor=${replayHostState.cursor + 1}`;
         }
+        renderReplayConsole();
         return;
 
       case 'editApprovalRequest': {

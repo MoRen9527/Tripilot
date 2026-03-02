@@ -5784,7 +5784,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 				const cmd = String(payload?.action ?? '').trim().toLowerCase();
 				const sid = String(payload?.sessionId ?? '').trim() || undefined;
 				const tid = String(payload?.traceId ?? '').trim() || undefined;
-				const cur = Number.isFinite(Number(payload?.cursor)) ? Math.max(0, Number(payload?.cursor)) : 0;
+				const cur = Number.isFinite(Number(payload?.cursor)) ? Math.max(0, Math.floor(Number(payload?.cursor))) : 0;
 				const next = state.replayState ?? {
 					active: false,
 					playing: false,
@@ -5801,7 +5801,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 					next.locked = true;
 					next.sessionId = sid;
 					next.traceId = tid;
-				} else if (cmd === 'play') {
+				} else if (cmd === 'play' || cmd === 'resume') {
 					next.active = true;
 					next.playing = true;
 					next.locked = true;
