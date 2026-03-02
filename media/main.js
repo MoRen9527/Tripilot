@@ -438,8 +438,7 @@
     ].join('');
     subagentTreeStatusEl.value = subagentTreeStatus;
     subagentTreeStatusEl.addEventListener('change', () => {
-      subagentTreeStatus = String(subagentTreeStatusEl?.value || 'all');
-      renderSubagentTree();
+      applySubagentStatusFilter(String(subagentTreeStatusEl?.value || 'all'));
     });
 
     const collapseAllBtn = document.createElement('button');
@@ -543,6 +542,14 @@
     return byScope.filter((node) => String(node?.status || '') === subagentTreeStatus || String(node?.type || '') === 'main');
   }
 
+  function applySubagentStatusFilter(nextStatus) {
+    const allowed = new Set(['all', 'working', 'done', 'error']);
+    const status = allowed.has(String(nextStatus || '')) ? String(nextStatus) : 'all';
+    subagentTreeStatus = status;
+    if (subagentTreeStatusEl) subagentTreeStatusEl.value = status;
+    renderSubagentTree();
+  }
+
   function jumpToSubagentEvent(node) {
     if (!node) return;
     selectedSubagentNodeId = String(node.id);
@@ -562,15 +569,43 @@
     ensureSubagentTreePanel();
     if (!subagentTreeListEl) return;
 
+    const scopeOnlyNodes = (() => {
+      const list = Array.isArray(subagentTreeNodes) ? subagentTreeNodes : [];
+      const active = (Array.isArray(sessionState.sessions) ? sessionState.sessions : []).find((s) => !!s?.isActive);
+      const activeSessionId = active?.sessionId ? String(active.sessionId) : '';
+      return list.filter((node) => {
+        const sid = node?.sessionId ? String(node.sessionId) : '';
+        const isCurrent = !!sid && !!activeSessionId && sid === activeSessionId;
+        if (subagentTreeScope === 'current') return isCurrent;
+        if (subagentTreeScope === 'history') return !isCurrent;
+        return true;
+      });
+    })();
+
     const nodes = filterSubagentNodes(subagentTreeNodes);
     const counters = { working: 0, done: 0, error: 0 };
-    for (const node of nodes) {
+    for (const node of scopeOnlyNodes) {
       if (String(node?.type || '') !== 'subagent') continue;
       const st = String(node?.status || '');
       if (st === 'working' || st === 'done' || st === 'error') counters[st] += 1;
     }
     if (subagentTreeStatsEl) {
-      subagentTreeStatsEl.textContent = `W:${counters.working} · D:${counters.done} · E:${counters.error}`;
+      const items = [
+        { key: 'working', label: `W:${counters.working}`, title: '过滤进行中节点' },
+        { key: 'done', label: `D:${counters.done}`, title: '过滤已完成节点' },
+        { key: 'error', label: `E:${counters.error}`, title: '过滤异常节点' }
+      ];
+      subagentTreeStatsEl.innerHTML = '';
+      for (const item of items) {
+        const active = subagentTreeStatus === item.key;
+        const btn = document.createElement('button');
+        btn.className = `subagentTreeStat ghost${active ? ' isActive' : ''}`;
+        btn.type = 'button';
+        btn.textContent = item.label;
+        btn.title = active ? '再次点击恢复全部状态' : item.title;
+        btn.addEventListener('click', () => applySubagentStatusFilter(active ? 'all' : item.key));
+        subagentTreeStatsEl.appendChild(btn);
+      }
     }
 
     const selectedId = String(selectedSubagentNodeId || '').trim();

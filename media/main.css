@@ -387,9 +387,22 @@ body {
 }
 
 .subagentTreeStats {
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  display: flex;
+  align-items: center;
+  gap: 4px;
   white-space: nowrap;
+}
+
+.subagentTreeStat {
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.subagentTreeStat.isActive {
+  color: var(--vscode-foreground);
+  border-color: var(--vscode-focusBorder);
 }
 
 .subagentTreeControls {
