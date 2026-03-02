@@ -403,6 +403,13 @@ body {
   max-width: 128px;
 }
 
+.subagentTreeAction {
+  flex: 0 0 auto;
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 11px;
+}
+
 .subagentTreeList {
   display: flex;
   flex-direction: column;

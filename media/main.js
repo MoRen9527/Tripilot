@@ -288,6 +288,33 @@
   let subagentTreeStatus = 'all';
   const collapsedSubagentNodeIds = new Set();
 
+  function getCollapsibleSubagentNodeIds(nodes) {
+    return Array.from(
+      new Set(
+        (Array.isArray(nodes) ? nodes : [])
+          .map((node) => (node?.parentId == null ? '' : String(node.parentId)))
+          .filter(Boolean)
+      )
+    );
+  }
+
+  function collapseAllSubagentNodes() {
+    const nodes = filterSubagentNodes(subagentTreeNodes);
+    for (const id of getCollapsibleSubagentNodeIds(nodes)) {
+      collapsedSubagentNodeIds.add(id);
+    }
+    renderSubagentTree();
+  }
+
+  function expandAllSubagentNodes() {
+    const nodes = filterSubagentNodes(subagentTreeNodes);
+    const currentIds = new Set(getCollapsibleSubagentNodeIds(nodes));
+    for (const id of Array.from(collapsedSubagentNodeIds)) {
+      if (currentIds.has(id)) collapsedSubagentNodeIds.delete(id);
+    }
+    renderSubagentTree();
+  }
+
   function scheduleRenderSessions() {
     if (renderSessionsRaf) cancelAnimationFrame(renderSessionsRaf);
     renderSessionsRaf = requestAnimationFrame(() => {
@@ -342,6 +369,20 @@
       renderSubagentTree();
     });
 
+    const collapseAllBtn = document.createElement('button');
+    collapseAllBtn.className = 'subagentTreeAction ghost';
+    collapseAllBtn.type = 'button';
+    collapseAllBtn.textContent = '全收起';
+    collapseAllBtn.title = '折叠当前范围内所有可折叠节点';
+    collapseAllBtn.addEventListener('click', () => collapseAllSubagentNodes());
+
+    const expandAllBtn = document.createElement('button');
+    expandAllBtn.className = 'subagentTreeAction ghost';
+    expandAllBtn.type = 'button';
+    expandAllBtn.textContent = '全展开';
+    expandAllBtn.title = '展开当前范围内所有可折叠节点';
+    expandAllBtn.addEventListener('click', () => expandAllSubagentNodes());
+
     const refresh = document.createElement('button');
     refresh.className = 'icon ghost';
     refresh.type = 'button';
@@ -352,6 +393,8 @@
 
     controls.appendChild(subagentTreeScopeEl);
     controls.appendChild(subagentTreeStatusEl);
+    controls.appendChild(collapseAllBtn);
+    controls.appendChild(expandAllBtn);
     header.appendChild(title);
     header.appendChild(controls);
     header.appendChild(refresh);
@@ -439,7 +482,7 @@
 
     const nodes = filterSubagentNodes(subagentTreeNodes);
     const nodeIds = new Set(nodes.map((node) => String(node?.id || '')).filter(Boolean));
-    const parentIds = new Set(nodes.map((node) => (node?.parentId == null ? '' : String(node.parentId))).filter(Boolean));
+    const parentIds = new Set(getCollapsibleSubagentNodeIds(nodes));
     for (const id of Array.from(collapsedSubagentNodeIds)) {
       if (!nodeIds.has(id)) collapsedSubagentNodeIds.delete(id);
     }
