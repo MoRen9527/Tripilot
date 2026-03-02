@@ -284,11 +284,26 @@
   let subagentTreeStatusEl = null;
   let subagentTreeFocusPathBtnEl = null;
   let subagentTreeStatsEl = null;
+  let replayWrapEl = null;
+  let replaySessionInputEl = null;
+  let replayTraceInputEl = null;
+  let replayPlayBtnEl = null;
+  let replayScrubEl = null;
+  let replayListEl = null;
+  let replayHintEl = null;
   let selectedSubagentNodeId = null;
   let subagentTreeNodes = [];
   let subagentTreeScope = 'all';
   let subagentTreeStatus = 'all';
   const collapsedSubagentNodeIdsBySession = new Map();
+  const replayState = {
+    records: [],
+    cursor: 0,
+    playing: false,
+    timer: null,
+    loadedSessionId: '',
+    loadedTraceId: ''
+  };
 
   function getNodeSessionKey(node) {
     const sid = node?.sessionId == null ? '' : String(node.sessionId).trim();
@@ -490,7 +505,88 @@
     subagentTreeWrapEl.appendChild(header);
     subagentTreeWrapEl.appendChild(subagentTreeListEl);
     subagentTreeWrapEl.appendChild(subagentTreeDetailEl);
+
+    replayWrapEl = document.createElement('div');
+    replayWrapEl.className = 'replayConsole';
+
+    const replayHeader = document.createElement('div');
+    replayHeader.className = 'replayHeader';
+    replayHeader.textContent = 'REPLAY (MVP)';
+
+    const replayInputs = document.createElement('div');
+    replayInputs.className = 'replayInputs';
+
+    replaySessionInputEl = document.createElement('input');
+    replaySessionInputEl.className = 'replayInput';
+    replaySessionInputEl.placeholder = 'sessionId';
+
+    replayTraceInputEl = document.createElement('input');
+    replayTraceInputEl.className = 'replayInput';
+    replayTraceInputEl.placeholder = 'traceId';
+
+    const replayLoadBtn = document.createElement('button');
+    replayLoadBtn.type = 'button';
+    replayLoadBtn.className = 'replayAction ghost';
+    replayLoadBtn.textContent = 'Load';
+    replayLoadBtn.addEventListener('click', () => loadReplayRecords());
+
+    replayInputs.appendChild(replaySessionInputEl);
+    replayInputs.appendChild(replayTraceInputEl);
+    replayInputs.appendChild(replayLoadBtn);
+
+    const replayControls = document.createElement('div');
+    replayControls.className = 'replayControls';
+
+    replayPlayBtnEl = document.createElement('button');
+    replayPlayBtnEl.type = 'button';
+    replayPlayBtnEl.className = 'replayAction ghost';
+    replayPlayBtnEl.textContent = 'Play';
+    replayPlayBtnEl.addEventListener('click', () => {
+      if (!replayState.records.length) {
+        loadReplayRecords();
+        if (!replayState.records.length) return;
+      }
+      if (replayState.playing) {
+        stopReplayTimer();
+      } else {
+        replayState.playing = true;
+        replayState.timer = setInterval(() => replayTick(), 850);
+      }
+      renderReplayConsole();
+    });
+
+    replayScrubEl = document.createElement('input');
+    replayScrubEl.type = 'range';
+    replayScrubEl.min = '0';
+    replayScrubEl.max = '0';
+    replayScrubEl.value = '0';
+    replayScrubEl.className = 'replayScrub';
+    replayScrubEl.addEventListener('input', () => {
+      replayState.cursor = Number(replayScrubEl?.value || '0');
+      stopReplayTimer();
+      const row = replayState.records[replayState.cursor];
+      if (row?.node) jumpToSubagentEvent(row.node);
+      renderReplayConsole();
+    });
+
+    replayControls.appendChild(replayPlayBtnEl);
+    replayControls.appendChild(replayScrubEl);
+
+    replayHintEl = document.createElement('div');
+    replayHintEl.className = 'replayHint';
+
+    replayListEl = document.createElement('div');
+    replayListEl.className = 'replayList';
+
+    replayWrapEl.appendChild(replayHeader);
+    replayWrapEl.appendChild(replayInputs);
+    replayWrapEl.appendChild(replayControls);
+    replayWrapEl.appendChild(replayHintEl);
+    replayWrapEl.appendChild(replayListEl);
+
+    subagentTreeWrapEl.appendChild(replayWrapEl);
     sessionsEl.appendChild(subagentTreeWrapEl);
+    renderReplayConsole();
     return subagentTreeWrapEl;
   }
 
@@ -548,6 +644,103 @@
     subagentTreeStatus = status;
     if (subagentTreeStatusEl) subagentTreeStatusEl.value = status;
     renderSubagentTree();
+  }
+
+  function stopReplayTimer() {
+    if (replayState.timer) {
+      clearInterval(replayState.timer);
+      replayState.timer = null;
+    }
+    replayState.playing = false;
+  }
+
+  function getReplayRecords(args) {
+    const sid = String(args?.sessionId || '').trim();
+    const tid = String(args?.traceId || '').trim();
+    const list = Array.isArray(subagentTreeNodes) ? subagentTreeNodes : [];
+    const rows = [];
+    for (const node of list) {
+      if (String(node?.type || '') !== 'subagent') continue;
+      const nodeSid = String(node?.sessionId || '').trim();
+      const nodeTid = String(node?.traceId || '').trim();
+      if (sid && nodeSid !== sid) continue;
+      if (tid && nodeTid !== tid) continue;
+      const eventId = String(node?.eventId || '').trim();
+      if (!eventId) continue;
+      const seqMatch = eventId.match(/_(\d+)$/);
+      const seq = seqMatch ? Number(seqMatch[1]) : Number.MAX_SAFE_INTEGER;
+      rows.push({
+        node,
+        sessionId: nodeSid,
+        traceId: nodeTid,
+        eventId,
+        status: String(node?.status || 'unknown'),
+        seq
+      });
+    }
+    rows.sort((a, b) => a.seq - b.seq || a.eventId.localeCompare(b.eventId));
+    return rows;
+  }
+
+  function renderReplayConsole() {
+    if (!replayListEl || !replayScrubEl || !replayPlayBtnEl || !replayHintEl) return;
+    const rows = replayState.records;
+    const max = Math.max(0, rows.length - 1);
+    replayScrubEl.max = String(max);
+    replayScrubEl.value = String(Math.min(max, Math.max(0, replayState.cursor || 0)));
+    replayScrubEl.disabled = rows.length === 0;
+    replayPlayBtnEl.disabled = rows.length <= 1;
+    replayPlayBtnEl.textContent = replayState.playing ? 'Pause' : 'Play';
+    replayHintEl.textContent = rows.length
+      ? `records=${rows.length} · cursor=${Math.min(rows.length, replayState.cursor + 1)}/${rows.length}`
+      : '未加载回放记录。请输入 sessionId/traceId 后点击 Load。';
+
+    replayListEl.innerHTML = '';
+    if (!rows.length) return;
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = `replayRow${i === replayState.cursor ? ' isActive' : ''}`;
+      item.textContent = `${row.eventId} · ${row.node?.label || row.node?.id || 'node'} · ${row.status}`;
+      item.title = `session=${row.sessionId} trace=${row.traceId}`;
+      item.addEventListener('click', () => {
+        replayState.cursor = i;
+        stopReplayTimer();
+        jumpToSubagentEvent(row.node);
+        renderReplayConsole();
+      });
+      replayListEl.appendChild(item);
+    }
+  }
+
+  function replayTick() {
+    if (!replayState.records.length) {
+      stopReplayTimer();
+      renderReplayConsole();
+      return;
+    }
+    const idx = Math.min(replayState.records.length - 1, Math.max(0, replayState.cursor));
+    const current = replayState.records[idx];
+    if (current?.node) jumpToSubagentEvent(current.node);
+    if (idx >= replayState.records.length - 1) {
+      stopReplayTimer();
+      renderReplayConsole();
+      return;
+    }
+    replayState.cursor = idx + 1;
+    renderReplayConsole();
+  }
+
+  function loadReplayRecords() {
+    const sid = String(replaySessionInputEl?.value || '').trim();
+    const tid = String(replayTraceInputEl?.value || '').trim();
+    replayState.records = getReplayRecords({ sessionId: sid, traceId: tid });
+    replayState.cursor = 0;
+    replayState.loadedSessionId = sid;
+    replayState.loadedTraceId = tid;
+    stopReplayTimer();
+    renderReplayConsole();
   }
 
   function jumpToSubagentEvent(node) {
@@ -610,11 +803,17 @@
 
     const selectedId = String(selectedSubagentNodeId || '').trim();
     const selectedVisible = !!selectedId && nodes.some((node) => String(node?.id || '') === selectedId);
+    const selectedNode = selectedVisible ? nodes.find((node) => String(node?.id || '') === selectedId) : null;
     if (subagentTreeFocusPathBtnEl) {
       subagentTreeFocusPathBtnEl.disabled = !selectedVisible;
       subagentTreeFocusPathBtnEl.title = selectedVisible
         ? '保留选中节点祖先路径展开，其他分支折叠'
         : '请先选中当前过滤范围内的一个节点';
+    }
+
+    if (selectedNode) {
+      if (replaySessionInputEl && !String(replaySessionInputEl.value || '').trim()) replaySessionInputEl.value = String(selectedNode.sessionId || '');
+      if (replayTraceInputEl && !String(replayTraceInputEl.value || '').trim()) replayTraceInputEl.value = String(selectedNode.traceId || '');
     }
 
     const nodeIds = new Set(nodes.map((node) => String(node?.id || '')).filter(Boolean));
@@ -698,6 +897,8 @@
       row.appendChild(jumpBtn);
       subagentTreeListEl.appendChild(row);
     }
+
+    renderReplayConsole();
   }
 
   function measureSessionRowHeight() {

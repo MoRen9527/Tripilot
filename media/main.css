@@ -499,6 +499,84 @@ body {
   gap: 2px;
 }
 
+.replayConsole {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--vscode-panel-border);
+}
+
+.replayHeader {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--vscode-descriptionForeground);
+  margin-bottom: 6px;
+}
+
+.replayInputs,
+.replayControls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.replayInput {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 11px;
+}
+
+.replayAction {
+  flex: 0 0 auto;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.replayScrub {
+  flex: 1;
+  min-width: 0;
+}
+
+.replayHint {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  margin-bottom: 6px;
+}
+
+.replayList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.replayRow {
+  text-align: left;
+  border: 1px solid var(--vscode-panel-border);
+  background: transparent;
+  color: var(--vscode-foreground);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.replayRow:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.replayRow.isActive {
+  border-color: var(--vscode-focusBorder);
+}
+
 .subagentTreeEmpty {
   font-size: 12px;
   color: var(--vscode-descriptionForeground);
