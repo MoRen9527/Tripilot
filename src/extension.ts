@@ -410,6 +410,15 @@ type WebviewOutboundMessageExtended =
 					traceId?: string;
 					eventId?: string;
 				}>;
+		  }
+	| {
+				type: 'replayState';
+				active: boolean;
+				playing: boolean;
+				cursor: number;
+				sessionId?: string;
+				traceId?: string;
+				locked: boolean;
 		  };
 
 type WorkspaceCustomAgentInfo = {
@@ -485,6 +494,14 @@ type ChatHostState = {
 	historySessionId?: string;
 	currentSessionTitle?: string;
 	replayOnReady?: { kind: 'session'; sessionId: string } | { kind: 'transcript'; transcript: ChatTranscriptItem[] };
+	replayState?: {
+		active: boolean;
+		playing: boolean;
+		cursor: number;
+		sessionId?: string;
+		traceId?: string;
+		locked: boolean;
+	};
 };
 
 
@@ -5574,6 +5591,26 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		this.postToHost(state, { type: 'subagentTree', nodes });
 	}
 
+	private postReplayState(state: ChatHostState): void {
+		const rs = state.replayState ?? {
+			active: false,
+			playing: false,
+			cursor: 0,
+			locked: false,
+			sessionId: undefined,
+			traceId: undefined
+		};
+		this.postToHost(state, {
+			type: 'replayState',
+			active: Boolean(rs.active),
+			playing: Boolean(rs.playing),
+			cursor: Number(rs.cursor ?? 0),
+			sessionId: rs.sessionId,
+			traceId: rs.traceId,
+			locked: Boolean(rs.locked)
+		});
+	}
+
 	private async handleUiAction(state: ChatHostState, action: string, payload: any) {
 		switch (action) {
 			case 'addContext': {
@@ -5735,6 +5772,63 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 
 			case 'requestSubagentTree': {
 				await this.postSubagentTree(state);
+				return;
+			}
+
+			case 'requestReplayState': {
+				this.postReplayState(state);
+				return;
+			}
+
+			case 'replayControl': {
+				const cmd = String(payload?.action ?? '').trim().toLowerCase();
+				const sid = String(payload?.sessionId ?? '').trim() || undefined;
+				const tid = String(payload?.traceId ?? '').trim() || undefined;
+				const cur = Number.isFinite(Number(payload?.cursor)) ? Math.max(0, Number(payload?.cursor)) : 0;
+				const next = state.replayState ?? {
+					active: false,
+					playing: false,
+					cursor: 0,
+					locked: false,
+					sessionId: undefined,
+					traceId: undefined
+				};
+
+				if (cmd === 'load') {
+					next.active = true;
+					next.playing = false;
+					next.cursor = cur;
+					next.locked = true;
+					next.sessionId = sid;
+					next.traceId = tid;
+				} else if (cmd === 'play') {
+					next.active = true;
+					next.playing = true;
+					next.locked = true;
+					next.cursor = cur;
+					next.sessionId = sid ?? next.sessionId;
+					next.traceId = tid ?? next.traceId;
+				} else if (cmd === 'pause' || cmd === 'scrub') {
+					next.active = true;
+					next.playing = false;
+					next.locked = true;
+					next.cursor = cur;
+					next.sessionId = sid ?? next.sessionId;
+					next.traceId = tid ?? next.traceId;
+				} else if (cmd === 'stop') {
+					next.active = false;
+					next.playing = false;
+					next.cursor = 0;
+					next.locked = false;
+					next.sessionId = undefined;
+					next.traceId = undefined;
+				}
+
+				state.replayState = next;
+				this.postReplayState(state);
+				if (!next.active) {
+					await this.postSubagentTree(state);
+				}
 				return;
 			}
 
@@ -6446,7 +6540,9 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			postToolTrace: (toolText) => {
 				this.postToHost(state, { type: 'chatAppend', role: 'tool', text: toolText });
 				state.transcript.push({ role: 'tool', text: toolText });
-				void this.postSubagentTree(state);
+				if (!(state.replayState?.active && state.replayState?.locked)) {
+					void this.postSubagentTree(state);
+				}
 				void this.appendHistory(state, {
 					kind: 'tool_trace',
 					text: toolText,
@@ -6556,7 +6652,9 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			postToolTrace: (toolText) => {
 				this.postToHost(state, { type: 'chatAppend', role: 'tool', text: toolText });
 				state.transcript.push({ role: 'tool', text: toolText });
-				void this.postSubagentTree(state);
+				if (!(state.replayState?.active && state.replayState?.locked)) {
+					void this.postSubagentTree(state);
+				}
 				void this.appendHistory(state, {
 					kind: 'tool_trace',
 					text: toolText,
@@ -6851,7 +6949,9 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 				postToolTrace: (toolText) => {
 					this.postToHost(state, { type: 'chatAppend', role: 'tool', text: toolText });
 					state.transcript.push({ role: 'tool', text: toolText });
-					void this.postSubagentTree(state);
+					if (!(state.replayState?.active && state.replayState?.locked)) {
+						void this.postSubagentTree(state);
+					}
 					void this.appendHistory(state, {
 						kind: 'tool_trace',
 						text: toolText,

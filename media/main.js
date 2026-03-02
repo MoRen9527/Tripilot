@@ -304,6 +304,21 @@
     loadedSessionId: '',
     loadedTraceId: ''
   };
+  const replayHostState = {
+    active: false,
+    playing: false,
+    cursor: 0,
+    locked: false,
+    sessionId: '',
+    traceId: ''
+  };
+
+  function postReplayControl(action, payload) {
+    uiAction('replayControl', {
+      action,
+      ...(payload || {})
+    });
+  }
 
   function getNodeSessionKey(node) {
     const sid = node?.sessionId == null ? '' : String(node.sessionId).trim();
@@ -548,9 +563,19 @@
       }
       if (replayState.playing) {
         stopReplayTimer();
+        postReplayControl('pause', {
+          cursor: replayState.cursor,
+          sessionId: replayState.loadedSessionId,
+          traceId: replayState.loadedTraceId
+        });
       } else {
         replayState.playing = true;
         replayState.timer = setInterval(() => replayTick(), 850);
+        postReplayControl('play', {
+          cursor: replayState.cursor,
+          sessionId: replayState.loadedSessionId,
+          traceId: replayState.loadedTraceId
+        });
       }
       renderReplayConsole();
     });
@@ -564,6 +589,11 @@
     replayScrubEl.addEventListener('input', () => {
       replayState.cursor = Number(replayScrubEl?.value || '0');
       stopReplayTimer();
+      postReplayControl('scrub', {
+        cursor: replayState.cursor,
+        sessionId: replayState.loadedSessionId,
+        traceId: replayState.loadedTraceId
+      });
       const row = replayState.records[replayState.cursor];
       if (row?.node) jumpToSubagentEvent(row.node);
       renderReplayConsole();
@@ -717,6 +747,11 @@
   function replayTick() {
     if (!replayState.records.length) {
       stopReplayTimer();
+      postReplayControl('pause', {
+        cursor: replayState.cursor,
+        sessionId: replayState.loadedSessionId,
+        traceId: replayState.loadedTraceId
+      });
       renderReplayConsole();
       return;
     }
@@ -725,6 +760,11 @@
     if (current?.node) jumpToSubagentEvent(current.node);
     if (idx >= replayState.records.length - 1) {
       stopReplayTimer();
+      postReplayControl('pause', {
+        cursor: replayState.cursor,
+        sessionId: replayState.loadedSessionId,
+        traceId: replayState.loadedTraceId
+      });
       renderReplayConsole();
       return;
     }
@@ -740,6 +780,11 @@
     replayState.loadedSessionId = sid;
     replayState.loadedTraceId = tid;
     stopReplayTimer();
+    postReplayControl('load', {
+      cursor: replayState.cursor,
+      sessionId: sid,
+      traceId: tid
+    });
     renderReplayConsole();
   }
 
@@ -1607,7 +1652,7 @@
     updateSendButton();
     updateContinueButton();
     renderSubagentTree();
-    uiAction('requestSubagentTree');
+    if (!replayHostState.active) uiAction('requestSubagentTree');
   }
 
   function sendCurrent() {
@@ -2360,11 +2405,11 @@
 		return;
     case 'chatToolInvocationBegin':
     onToolInvocationBegin(msg);
-    uiAction('requestSubagentTree');
+    if (!replayHostState.active) uiAction('requestSubagentTree');
     return;
     case 'chatToolInvocationEnd':
     onToolInvocationEnd(msg);
-    uiAction('requestSubagentTree');
+    if (!replayHostState.active) uiAction('requestSubagentTree');
     return;
     case 'chatTodoList':
     renderTodoList(msg.todoList, msg.note);
@@ -2395,6 +2440,18 @@
       case 'subagentTree':
         subagentTreeNodes = Array.isArray(msg.nodes) ? msg.nodes : [];
         renderSubagentTree();
+        return;
+
+      case 'replayState':
+        replayHostState.active = !!msg.active;
+        replayHostState.playing = !!msg.playing;
+        replayHostState.cursor = Number.isFinite(Number(msg.cursor)) ? Number(msg.cursor) : 0;
+        replayHostState.locked = !!msg.locked;
+        replayHostState.sessionId = String(msg.sessionId || '');
+        replayHostState.traceId = String(msg.traceId || '');
+        if (replayHintEl && replayHostState.active) {
+          replayHintEl.textContent = `host-replay: active · ${replayHostState.playing ? 'playing' : 'paused'} · cursor=${replayHostState.cursor + 1}`;
+        }
         return;
 
       case 'editApprovalRequest': {
@@ -2650,5 +2707,6 @@
     renderSubagentTree();
     uiAction('requestSessions');
     uiAction('requestSubagentTree');
+    uiAction('requestReplayState');
   }
 })();
