@@ -415,6 +415,20 @@ body {
   gap: 6px;
 }
 
+.subagentTreeToggle {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  padding: 0;
+  line-height: 1;
+  color: var(--vscode-descriptionForeground);
+}
+
+.subagentTreeToggle:hover {
+  color: var(--vscode-foreground);
+}
+
 .subagentTreeNode {
   flex: 1;
   min-width: 0;

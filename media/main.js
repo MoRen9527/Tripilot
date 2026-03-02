@@ -286,6 +286,7 @@
   let subagentTreeNodes = [];
   let subagentTreeScope = 'all';
   let subagentTreeStatus = 'all';
+  const collapsedSubagentNodeIds = new Set();
 
   function scheduleRenderSessions() {
     if (renderSessionsRaf) cancelAnimationFrame(renderSessionsRaf);
@@ -375,6 +376,7 @@
       const npid = node?.parentId == null ? null : String(node.parentId);
       if (npid !== pid) continue;
       out.push({ node, depth });
+      if (collapsedSubagentNodeIds.has(String(node.id))) continue;
       flattenSubagentNodes(nodes, String(node.id), depth + 1, out);
     }
   }
@@ -436,6 +438,11 @@
     if (!subagentTreeListEl) return;
 
     const nodes = filterSubagentNodes(subagentTreeNodes);
+    const nodeIds = new Set(nodes.map((node) => String(node?.id || '')).filter(Boolean));
+    const parentIds = new Set(nodes.map((node) => (node?.parentId == null ? '' : String(node.parentId))).filter(Boolean));
+    for (const id of Array.from(collapsedSubagentNodeIds)) {
+      if (!nodeIds.has(id)) collapsedSubagentNodeIds.delete(id);
+    }
     const ordered = [];
     flattenSubagentNodes(nodes, null, 0, ordered);
 
@@ -452,6 +459,26 @@
       const row = document.createElement('div');
       row.className = 'subagentTreeRow';
       row.style.setProperty('--depth', String(item.depth));
+
+      const hasChildren = parentIds.has(String(item.node.id));
+      if (hasChildren) {
+        const toggleBtn = document.createElement('button');
+        const isCollapsed = collapsedSubagentNodeIds.has(String(item.node.id));
+        toggleBtn.className = 'subagentTreeToggle ghost';
+        toggleBtn.type = 'button';
+        toggleBtn.textContent = isCollapsed ? '▸' : '▾';
+        toggleBtn.title = isCollapsed ? '展开子节点' : '折叠子节点';
+        toggleBtn.setAttribute('aria-label', toggleBtn.title);
+        toggleBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const id = String(item.node.id);
+          if (collapsedSubagentNodeIds.has(id)) collapsedSubagentNodeIds.delete(id);
+          else collapsedSubagentNodeIds.add(id);
+          renderSubagentTree();
+        });
+        row.appendChild(toggleBtn);
+      }
 
       const nodeBtn = document.createElement('button');
       const isSelected = String(selectedSubagentNodeId || '') === String(item.node.id);
@@ -1911,6 +1938,7 @@
 		sessionsUiMode = 'auto';
 		detailSessionId = null;
     selectedSubagentNodeId = null;
+    collapsedSubagentNodeIds.clear();
 		scheduleRenderSessions();
         renderSubagentTree();
         // Also clear approval UI state.
