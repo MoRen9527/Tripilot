@@ -624,7 +624,12 @@
         traceId: replayState.loadedTraceId
       });
       const row = replayState.records[replayState.cursor];
-      if (row?.node) jumpToSubagentEvent(row.node);
+      if (row?.node) {
+        jumpToSubagentEvent(row.node, {
+          silent: !!replayHostState.active,
+          source: replayHostState.active ? 'replay-scrub' : 'subagent-tree-live'
+        });
+      }
       renderReplayConsole();
     });
 
@@ -791,7 +796,10 @@
           sessionId: replayState.loadedSessionId,
           traceId: replayState.loadedTraceId
         });
-        jumpToSubagentEvent(row.node);
+        jumpToSubagentEvent(row.node, {
+          silent: !!replayHostState.active,
+          source: replayHostState.active ? 'replay-select' : 'subagent-tree-live'
+        });
         renderReplayConsole();
       });
       replayListEl.appendChild(item);
@@ -820,8 +828,10 @@
     renderReplayConsole();
   }
 
-  function jumpToSubagentEvent(node) {
+  function jumpToSubagentEvent(node, options) {
     if (!node) return;
+    const silent = !!options?.silent;
+    const source = String(options?.source || 'subagent-tree-live');
     selectedSubagentNodeId = String(node.id);
     setSubagentDetail(node);
     uiAction('jumpToSubagentEvent', {
@@ -830,7 +840,8 @@
       traceId: node.traceId,
       sessionId: node.sessionId,
       status: node.status,
-      source: 'subagent-tree-live'
+      source,
+      silent
     });
     renderSubagentTree();
   }
@@ -2491,7 +2502,12 @@
         if (!replayHostState.active) stopReplayTimer();
         if (replayHostState.active && replayState.cursor !== prevCursor) {
           const row = replayState.records[replayState.cursor];
-          if (row?.node) jumpToSubagentEvent(row.node);
+          if (row?.node) {
+            jumpToSubagentEvent(row.node, {
+              silent: true,
+              source: 'replay-host-tick'
+            });
+          }
         }
         if (replayHintEl && replayHostState.active) {
           replayHintEl.textContent = `host-replay: active · ${replayHostState.playing ? 'playing' : 'paused'} · cursor=${replayHostState.cursor + 1}`;

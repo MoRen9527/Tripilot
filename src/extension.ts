@@ -5914,6 +5914,9 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 				const traceId = String(payload?.traceId ?? '').trim() || '(unknown-trace)';
 				const sessionId = String(payload?.sessionId ?? '').trim() || '(unknown-session)';
 				const status = String(payload?.status ?? '').trim() || 'unknown';
+				const source = String(payload?.source ?? '').trim() || 'subagent-tree-live';
+				const silent = Boolean(payload?.silent);
+				if (silent) return;
 				this.postToHost(state, {
 					type: 'chatAppend',
 					role: 'tool',
@@ -5923,7 +5926,8 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 						`eventId: ${eventId}`,
 						`traceId: ${traceId}`,
 						`sessionId: ${sessionId}`,
-						`status: ${status}`
+						`status: ${status}`,
+						`source: ${source}`
 					].join('\n')
 				});
 				return;
