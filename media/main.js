@@ -301,7 +301,6 @@
     records: [],
     cursor: 0,
     playing: false,
-    timer: null,
     loadedSessionId: '',
     loadedTraceId: ''
   };
@@ -311,12 +310,22 @@
     cursor: 0,
     locked: false,
     sessionId: '',
-    traceId: ''
+    traceId: '',
+    totalRecords: 0,
+    cadenceMs: 850
   };
 
   function postReplayControl(action, payload) {
     uiAction('replayControl', {
       action,
+      ...(payload || {})
+    });
+  }
+
+  function emitReplayControl(action, payload) {
+    postReplayControl(action, {
+      totalRecords: Array.isArray(replayState.records) ? replayState.records.length : 0,
+      cadenceMs: Number.isFinite(Number(replayHostState.cadenceMs)) ? Number(replayHostState.cadenceMs) : 850,
       ...(payload || {})
     });
   }
@@ -569,15 +578,14 @@
       }
       if (replayState.playing) {
         stopReplayTimer();
-        postReplayControl('pause', {
+        emitReplayControl('pause', {
           cursor: replayState.cursor,
           sessionId: replayState.loadedSessionId,
           traceId: replayState.loadedTraceId
         });
       } else {
         replayState.playing = true;
-        replayState.timer = setInterval(() => replayTick(), 850);
-        postReplayControl('play', {
+        emitReplayControl(replayHostState.active && replayHostState.locked ? 'resume' : 'play', {
           cursor: replayState.cursor,
           sessionId: replayState.loadedSessionId,
           traceId: replayState.loadedTraceId
@@ -593,7 +601,7 @@
     replayStopBtnEl.addEventListener('click', () => {
       stopReplayTimer();
       replayState.cursor = 0;
-      postReplayControl('stop', {
+      emitReplayControl('stop', {
         sessionId: replayState.loadedSessionId,
         traceId: replayState.loadedTraceId
       });
@@ -610,7 +618,7 @@
     replayScrubEl.addEventListener('input', () => {
       replayState.cursor = Number(replayScrubEl?.value || '0');
       stopReplayTimer();
-      postReplayControl('scrub', {
+      emitReplayControl('scrub', {
         cursor: replayState.cursor,
         sessionId: replayState.loadedSessionId,
         traceId: replayState.loadedTraceId
@@ -699,10 +707,6 @@
   }
 
   function stopReplayTimer() {
-    if (replayState.timer) {
-      clearInterval(replayState.timer);
-      replayState.timer = null;
-    }
     replayState.playing = false;
   }
 
@@ -720,8 +724,14 @@
       if (tid && nodeTid !== tid) continue;
       const eventId = String(node?.eventId || '').trim();
       if (!eventId) continue;
+      const explicitSeq = Number(node?.eventSeq);
       const seqMatch = eventId.match(/_(\d+)$/);
-      const seq = seqMatch ? Number(seqMatch[1]) : Number.MAX_SAFE_INTEGER;
+      const seqFromEventId = seqMatch ? Number(seqMatch[1]) : Number.NaN;
+      const seq = Number.isFinite(explicitSeq)
+        ? Math.max(0, Math.floor(explicitSeq))
+        : Number.isFinite(seqFromEventId)
+          ? Math.max(0, Math.floor(seqFromEventId))
+          : Number.MAX_SAFE_INTEGER;
       rows.push({
         node,
         sessionId: nodeSid,
@@ -776,39 +786,16 @@
       item.addEventListener('click', () => {
         replayState.cursor = i;
         stopReplayTimer();
+        emitReplayControl('scrub', {
+          cursor: replayState.cursor,
+          sessionId: replayState.loadedSessionId,
+          traceId: replayState.loadedTraceId
+        });
         jumpToSubagentEvent(row.node);
         renderReplayConsole();
       });
       replayListEl.appendChild(item);
     }
-  }
-
-  function replayTick() {
-    if (!replayState.records.length) {
-      stopReplayTimer();
-      postReplayControl('pause', {
-        cursor: replayState.cursor,
-        sessionId: replayState.loadedSessionId,
-        traceId: replayState.loadedTraceId
-      });
-      renderReplayConsole();
-      return;
-    }
-    const idx = Math.min(replayState.records.length - 1, Math.max(0, replayState.cursor));
-    const current = replayState.records[idx];
-    if (current?.node) jumpToSubagentEvent(current.node);
-    if (idx >= replayState.records.length - 1) {
-      stopReplayTimer();
-      postReplayControl('pause', {
-        cursor: replayState.cursor,
-        sessionId: replayState.loadedSessionId,
-        traceId: replayState.loadedTraceId
-      });
-      renderReplayConsole();
-      return;
-    }
-    replayState.cursor = idx + 1;
-    renderReplayConsole();
   }
 
   function loadReplayRecords() {
@@ -820,12 +807,12 @@
     replayState.loadedTraceId = tid;
     stopReplayTimer();
     if (!replayState.records.length) {
-      postReplayControl('stop', { sessionId: sid, traceId: tid });
+      emitReplayControl('stop', { sessionId: sid, traceId: tid });
       uiAction('requestSubagentTree');
       renderReplayConsole();
       return;
     }
-    postReplayControl('load', {
+    emitReplayControl('load', {
       cursor: replayState.cursor,
       sessionId: sid,
       traceId: tid
@@ -2488,21 +2475,30 @@
         return;
 
       case 'replayState':
+        {
+        const prevCursor = Number.isFinite(Number(replayState.cursor)) ? Number(replayState.cursor) : 0;
         replayHostState.active = !!msg.active;
         replayHostState.playing = !!msg.playing;
         replayHostState.cursor = Number.isFinite(Number(msg.cursor)) ? Number(msg.cursor) : 0;
         replayHostState.locked = !!msg.locked;
         replayHostState.sessionId = String(msg.sessionId || '');
         replayHostState.traceId = String(msg.traceId || '');
+        replayHostState.totalRecords = Number.isFinite(Number(msg.totalRecords)) ? Math.max(0, Math.floor(Number(msg.totalRecords))) : 0;
+        replayHostState.cadenceMs = Number.isFinite(Number(msg.cadenceMs)) ? Math.max(250, Math.floor(Number(msg.cadenceMs))) : 850;
         replayState.playing = replayHostState.playing;
         if (Number.isFinite(replayHostState.cursor)) replayState.cursor = Number(replayHostState.cursor);
         clampReplayCursor();
         if (!replayHostState.active) stopReplayTimer();
+        if (replayHostState.active && replayState.cursor !== prevCursor) {
+          const row = replayState.records[replayState.cursor];
+          if (row?.node) jumpToSubagentEvent(row.node);
+        }
         if (replayHintEl && replayHostState.active) {
           replayHintEl.textContent = `host-replay: active · ${replayHostState.playing ? 'playing' : 'paused'} · cursor=${replayHostState.cursor + 1}`;
         }
         renderReplayConsole();
         return;
+        }
 
       case 'editApprovalRequest': {
         currentApprovalRequestId = msg.requestId;

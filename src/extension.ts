@@ -409,6 +409,7 @@ type WebviewOutboundMessageExtended =
 					sessionId?: string;
 					traceId?: string;
 					eventId?: string;
+					eventSeq?: number;
 				}>;
 		  }
 	| {
@@ -419,6 +420,8 @@ type WebviewOutboundMessageExtended =
 				sessionId?: string;
 				traceId?: string;
 				locked: boolean;
+				totalRecords?: number;
+				cadenceMs?: number;
 		  };
 
 type WorkspaceCustomAgentInfo = {
@@ -501,7 +504,10 @@ type ChatHostState = {
 		sessionId?: string;
 		traceId?: string;
 		locked: boolean;
+		totalRecords?: number;
+		cadenceMs?: number;
 	};
+	replayCadenceTimer?: NodeJS.Timeout;
 };
 
 
@@ -3380,6 +3386,12 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 					clearTimeout(this.sessionsRefreshTimer);
 					this.sessionsRefreshTimer = undefined;
 				}
+				for (const state of Object.values(this.hostStates)) {
+					if (state.replayCadenceTimer) {
+						clearInterval(state.replayCadenceTimer);
+						state.replayCadenceTimer = undefined;
+					}
+				}
 			}
 		});
 	}
@@ -5431,6 +5443,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		sessionId?: string;
 		traceId?: string;
 		eventId?: string;
+		eventSeq?: number;
 	}> {
 		const out: Array<{
 			id: string;
@@ -5441,6 +5454,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			sessionId?: string;
 			traceId?: string;
 			eventId?: string;
+			eventSeq?: number;
 		}> = [];
 
 		let subIndex = 0;
@@ -5472,7 +5486,8 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 					status: 'working',
 					sessionId: args.sessionId,
 					traceId: args.traceId,
-					eventId: `evt_subagent_start_${i + 1}`
+					eventId: `evt_subagent_start_${i + 1}`,
+					eventSeq: i + 1
 				});
 				stack.push({ id: nodeId, index: out.length - 1 });
 				continue;
@@ -5486,7 +5501,8 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 				out[current.index] = {
 					...out[current.index],
 					status: nextStatus,
-					eventId: `evt_subagent_end_${i + 1}`
+					eventId: `evt_subagent_end_${i + 1}`,
+					eventSeq: i + 1
 				};
 			}
 		}
@@ -5536,6 +5552,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			sessionId?: string;
 			traceId?: string;
 			eventId?: string;
+			eventSeq?: number;
 		}> = [];
 
 		nodes.push({
@@ -5598,7 +5615,9 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			cursor: 0,
 			locked: false,
 			sessionId: undefined,
-			traceId: undefined
+			traceId: undefined,
+			totalRecords: 0,
+			cadenceMs: 850
 		};
 		this.postToHost(state, {
 			type: 'replayState',
@@ -5607,8 +5626,48 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			cursor: Number(rs.cursor ?? 0),
 			sessionId: rs.sessionId,
 			traceId: rs.traceId,
-			locked: Boolean(rs.locked)
+			locked: Boolean(rs.locked),
+			totalRecords: Number.isFinite(Number(rs.totalRecords)) ? Math.max(0, Math.floor(Number(rs.totalRecords))) : 0,
+			cadenceMs: Number.isFinite(Number(rs.cadenceMs)) ? Math.max(250, Math.floor(Number(rs.cadenceMs))) : 850
 		});
+	}
+
+	private stopReplayCadence(state: ChatHostState): void {
+		if (state.replayCadenceTimer) {
+			clearInterval(state.replayCadenceTimer);
+			state.replayCadenceTimer = undefined;
+		}
+	}
+
+	private startReplayCadence(state: ChatHostState): void {
+		this.stopReplayCadence(state);
+		const rs = state.replayState;
+		if (!rs?.active || !rs.playing || !rs.locked) return;
+		const cadenceMs = Number.isFinite(Number(rs.cadenceMs)) ? Math.max(250, Math.floor(Number(rs.cadenceMs))) : 850;
+		state.replayCadenceTimer = setInterval(() => {
+			const cur = state.replayState;
+			if (!cur?.active || !cur.playing || !cur.locked) {
+				this.stopReplayCadence(state);
+				return;
+			}
+			const total = Number.isFinite(Number(cur.totalRecords)) ? Math.max(0, Math.floor(Number(cur.totalRecords))) : 0;
+			if (total <= 0) {
+				cur.playing = false;
+				this.stopReplayCadence(state);
+				this.postReplayState(state);
+				return;
+			}
+			const cursor = Number.isFinite(Number(cur.cursor)) ? Math.max(0, Math.floor(Number(cur.cursor))) : 0;
+			if (cursor >= total - 1) {
+				cur.cursor = total - 1;
+				cur.playing = false;
+				this.stopReplayCadence(state);
+				this.postReplayState(state);
+				return;
+			}
+			cur.cursor = cursor + 1;
+			this.postReplayState(state);
+		}, cadenceMs);
 	}
 
 	private async handleUiAction(state: ChatHostState, action: string, payload: any) {
@@ -5785,13 +5844,19 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 				const sid = String(payload?.sessionId ?? '').trim() || undefined;
 				const tid = String(payload?.traceId ?? '').trim() || undefined;
 				const cur = Number.isFinite(Number(payload?.cursor)) ? Math.max(0, Math.floor(Number(payload?.cursor))) : 0;
+				const total = Number.isFinite(Number(payload?.totalRecords)) ? Math.max(0, Math.floor(Number(payload?.totalRecords))) : undefined;
+				const cadenceMs = Number.isFinite(Number(payload?.cadenceMs))
+					? Math.max(250, Math.floor(Number(payload?.cadenceMs)))
+					: undefined;
 				const next = state.replayState ?? {
 					active: false,
 					playing: false,
 					cursor: 0,
 					locked: false,
 					sessionId: undefined,
-					traceId: undefined
+					traceId: undefined,
+					totalRecords: 0,
+					cadenceMs: 850
 				};
 
 				if (cmd === 'load') {
@@ -5801,6 +5866,9 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 					next.locked = true;
 					next.sessionId = sid;
 					next.traceId = tid;
+					next.totalRecords = total ?? 0;
+					next.cadenceMs = cadenceMs ?? next.cadenceMs ?? 850;
+					this.stopReplayCadence(state);
 				} else if (cmd === 'play' || cmd === 'resume') {
 					next.active = true;
 					next.playing = true;
@@ -5808,6 +5876,9 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 					next.cursor = cur;
 					next.sessionId = sid ?? next.sessionId;
 					next.traceId = tid ?? next.traceId;
+					next.totalRecords = total ?? next.totalRecords ?? 0;
+					next.cadenceMs = cadenceMs ?? next.cadenceMs ?? 850;
+					this.startReplayCadence(state);
 				} else if (cmd === 'pause' || cmd === 'scrub') {
 					next.active = true;
 					next.playing = false;
@@ -5815,6 +5886,9 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 					next.cursor = cur;
 					next.sessionId = sid ?? next.sessionId;
 					next.traceId = tid ?? next.traceId;
+					next.totalRecords = total ?? next.totalRecords ?? 0;
+					next.cadenceMs = cadenceMs ?? next.cadenceMs ?? 850;
+					this.stopReplayCadence(state);
 				} else if (cmd === 'stop') {
 					next.active = false;
 					next.playing = false;
@@ -5822,6 +5896,8 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 					next.locked = false;
 					next.sessionId = undefined;
 					next.traceId = undefined;
+					next.totalRecords = 0;
+					this.stopReplayCadence(state);
 				}
 
 				state.replayState = next;
