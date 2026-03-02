@@ -5545,6 +5545,27 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			case 'sessionsView':
 				return;
 
+			case 'jumpToSubagentEvent': {
+				const nodeId = String(payload?.nodeId ?? '').trim() || '(unknown-node)';
+				const eventId = String(payload?.eventId ?? '').trim() || '(unknown-event)';
+				const traceId = String(payload?.traceId ?? '').trim() || '(unknown-trace)';
+				const sessionId = String(payload?.sessionId ?? '').trim() || '(unknown-session)';
+				const status = String(payload?.status ?? '').trim() || 'unknown';
+				this.postToHost(state, {
+					type: 'chatAppend',
+					role: 'tool',
+					text: [
+						'[Subagent Event Jump]',
+						`nodeId: ${nodeId}`,
+						`eventId: ${eventId}`,
+						`traceId: ${traceId}`,
+						`sessionId: ${sessionId}`,
+						`status: ${status}`
+					].join('\n')
+				});
+				return;
+			}
+
 			case 'setTempSession': {
 				const tempEnabled = Boolean(payload?.enabled);
 				// temp session ON => do not record history.

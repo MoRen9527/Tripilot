@@ -365,6 +365,80 @@ body {
   color: var(--vscode-descriptionForeground);
 }
 
+.subagentTree {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--vscode-panel-border);
+}
+
+.subagentTreeHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.subagentTreeTitle {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--vscode-descriptionForeground);
+}
+
+.subagentTreeList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.subagentTreeRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.subagentTreeNode {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  border: 1px solid var(--vscode-panel-border);
+  background: transparent;
+  color: var(--vscode-foreground);
+  border-radius: 6px;
+  padding: 4px 6px;
+  padding-left: calc(6px + var(--depth, 0) * 14px);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.subagentTreeNode:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.subagentTreeNode.isSelected {
+  border-color: var(--vscode-focusBorder);
+}
+
+.subagentTreeJump {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border-radius: 6px;
+}
+
+.subagentTreeDetail {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  word-break: break-all;
+}
+
+.subagentTreeEmpty {
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+
 .header {
   display: flex;
   align-items: center;

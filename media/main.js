@@ -277,12 +277,186 @@
   let cachedSessionRowHeight = null;
   let renderSessionsRaf = 0;
 
+  let subagentTreeWrapEl = null;
+  let subagentTreeListEl = null;
+  let subagentTreeDetailEl = null;
+  let selectedSubagentNodeId = null;
+
   function scheduleRenderSessions() {
     if (renderSessionsRaf) cancelAnimationFrame(renderSessionsRaf);
     renderSessionsRaf = requestAnimationFrame(() => {
       renderSessionsRaf = 0;
       renderSessions();
     });
+  }
+
+  function ensureSubagentTreePanel() {
+    if (!sessionsEl) return null;
+    if (subagentTreeWrapEl && sessionsEl.contains(subagentTreeWrapEl)) return subagentTreeWrapEl;
+
+    subagentTreeWrapEl = document.createElement('div');
+    subagentTreeWrapEl.className = 'subagentTree';
+
+    const header = document.createElement('div');
+    header.className = 'subagentTreeHeader';
+
+    const title = document.createElement('div');
+    title.className = 'subagentTreeTitle';
+    title.textContent = 'SUBAGENT TREE (MVP)';
+
+    const refresh = document.createElement('button');
+    refresh.className = 'icon ghost';
+    refresh.type = 'button';
+    refresh.title = '刷新关系树';
+    refresh.setAttribute('aria-label', '刷新关系树');
+    refresh.innerHTML = '<span class="codicon codicon-refresh"></span>';
+    refresh.addEventListener('click', () => renderSubagentTree());
+
+    header.appendChild(title);
+    header.appendChild(refresh);
+
+    subagentTreeListEl = document.createElement('div');
+    subagentTreeListEl.className = 'subagentTreeList';
+
+    subagentTreeDetailEl = document.createElement('div');
+    subagentTreeDetailEl.className = 'subagentTreeDetail';
+    subagentTreeDetailEl.textContent = '选择节点后可查看事件详情并执行跳转。';
+
+    subagentTreeWrapEl.appendChild(header);
+    subagentTreeWrapEl.appendChild(subagentTreeListEl);
+    subagentTreeWrapEl.appendChild(subagentTreeDetailEl);
+    sessionsEl.appendChild(subagentTreeWrapEl);
+    return subagentTreeWrapEl;
+  }
+
+  function buildMvpSubagentNodes() {
+    const allSessions = Array.isArray(sessionState.sessions) ? sessionState.sessions : [];
+    const active = allSessions.find((s) => !!s?.isActive) || allSessions[0] || null;
+    const sessionId = String(active?.sessionId || 'session_mvp_01');
+    const traceId = 'trc_phase3_mvp_01';
+
+    return [
+      {
+        id: 'agent.root',
+        parentId: null,
+        label: active?.title ? `Agent VM · ${active.title}` : 'Agent VM',
+        type: 'main',
+        status: isBusy ? 'working' : 'idle',
+        sessionId,
+        traceId,
+        eventId: 'evt_root_state_changed'
+      },
+      {
+        id: 'agent.plan',
+        parentId: 'agent.root',
+        label: 'SubAgent Planner',
+        type: 'subagent',
+        status: 'done',
+        sessionId,
+        traceId,
+        eventId: 'evt_plan_finished'
+      },
+      {
+        id: 'agent.retrieval',
+        parentId: 'agent.root',
+        label: 'SubAgent Retrieval',
+        type: 'subagent',
+        status: 'done',
+        sessionId,
+        traceId,
+        eventId: 'evt_retrieval_message'
+      },
+      {
+        id: 'agent.render',
+        parentId: 'agent.root',
+        label: 'SubAgent Render',
+        type: 'subagent',
+        status: 'working',
+        sessionId,
+        traceId,
+        eventId: 'evt_render_started'
+      }
+    ];
+  }
+
+  function flattenSubagentNodes(nodes, parentId, depth, out) {
+    const pid = parentId == null ? null : String(parentId);
+    for (const node of nodes) {
+      const npid = node?.parentId == null ? null : String(node.parentId);
+      if (npid !== pid) continue;
+      out.push({ node, depth });
+      flattenSubagentNodes(nodes, String(node.id), depth + 1, out);
+    }
+  }
+
+  function setSubagentDetail(node) {
+    if (!subagentTreeDetailEl || !node) return;
+    subagentTreeDetailEl.textContent = `node=${node.id} · event=${node.eventId} · trace=${node.traceId} · session=${node.sessionId} · status=${node.status}`;
+  }
+
+  function jumpToSubagentEvent(node) {
+    if (!node) return;
+    selectedSubagentNodeId = String(node.id);
+    setSubagentDetail(node);
+    uiAction('jumpToSubagentEvent', {
+      nodeId: node.id,
+      eventId: node.eventId,
+      traceId: node.traceId,
+      sessionId: node.sessionId,
+      status: node.status,
+      source: 'subagent-tree-mvp'
+    });
+    renderSubagentTree();
+  }
+
+  function renderSubagentTree() {
+    ensureSubagentTreePanel();
+    if (!subagentTreeListEl) return;
+
+    const nodes = buildMvpSubagentNodes();
+    const ordered = [];
+    flattenSubagentNodes(nodes, null, 0, ordered);
+
+    subagentTreeListEl.innerHTML = '';
+    if (!ordered.length) {
+      const empty = document.createElement('div');
+      empty.className = 'subagentTreeEmpty';
+      empty.textContent = '暂无子代理关系数据。';
+      subagentTreeListEl.appendChild(empty);
+      return;
+    }
+
+    for (const item of ordered) {
+      const row = document.createElement('div');
+      row.className = 'subagentTreeRow';
+      row.style.setProperty('--depth', String(item.depth));
+
+      const nodeBtn = document.createElement('button');
+      const isSelected = String(selectedSubagentNodeId || '') === String(item.node.id);
+      nodeBtn.className = `subagentTreeNode${isSelected ? ' isSelected' : ''}`;
+      nodeBtn.type = 'button';
+      nodeBtn.textContent = `${item.node.label} (${item.node.status})`;
+      nodeBtn.title = `node=${item.node.id}`;
+      nodeBtn.addEventListener('click', () => {
+        selectedSubagentNodeId = String(item.node.id);
+        setSubagentDetail(item.node);
+        renderSubagentTree();
+      });
+
+      const jumpBtn = document.createElement('button');
+      jumpBtn.className = 'subagentTreeJump ghost';
+      jumpBtn.type = 'button';
+      jumpBtn.textContent = '事件跳转';
+      jumpBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        jumpToSubagentEvent(item.node);
+      });
+
+      row.appendChild(nodeBtn);
+      row.appendChild(jumpBtn);
+      subagentTreeListEl.appendChild(row);
+    }
   }
 
   function measureSessionRowHeight() {
@@ -990,6 +1164,7 @@
     isBusy = status === 'thinking' || status === 'running-tools';
     updateSendButton();
     updateContinueButton();
+    renderSubagentTree();
   }
 
   function sendCurrent() {
@@ -1712,7 +1887,9 @@
 		// Copilot-like: reset any pinned session detail view and follow active session.
 		sessionsUiMode = 'auto';
 		detailSessionId = null;
+    selectedSubagentNodeId = null;
 		scheduleRenderSessions();
+        renderSubagentTree();
         // Also clear approval UI state.
         currentApprovalRequestId = null;
         approvalEl?.classList.add('hidden');
@@ -1765,6 +1942,7 @@
           sessions: Array.isArray(msg.sessions) ? msg.sessions : []
         };
         renderSessions();
+        renderSubagentTree();
         return;
 
       case 'editApprovalRequest': {
@@ -2017,6 +2195,7 @@
   // Sidebar-only: fetch sessions list (best-effort, also pushed by backend).
   const hostIsEditor = document.body.classList.contains('host-editor');
   if (!hostIsEditor) {
+    renderSubagentTree();
     uiAction('requestSessions');
   }
 })();
