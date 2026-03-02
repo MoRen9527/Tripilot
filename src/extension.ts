@@ -3216,6 +3216,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 	private workspaceCustomAgents: WorkspaceCustomAgentInfo[] = [];
 	private workspaceCustomAgentById = new Map<string, WorkspaceCustomAgentInfo>();
 	private sessionsRefreshTimer?: NodeJS.Timeout;
+	private subagentTraceCache = new Map<string, { atMs: number; lines: string[] }>();
 	private pendingEditApproval?: {
 		requestId: string;
 		originHost: ChatHostKind;
@@ -5399,7 +5400,113 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		return parts.join('\n');
 	}
 
-	private postSubagentTree(state: ChatHostState): void {
+	private extractSubagentNodesFromToolLines(args: {
+		toolLines: string[];
+		parentId: string;
+		sessionId?: string;
+		traceId?: string;
+	}): Array<{
+		id: string;
+		parentId: string | null;
+		label: string;
+		type: 'main' | 'subagent';
+		status: 'idle' | 'working' | 'done' | 'error';
+		sessionId?: string;
+		traceId?: string;
+		eventId?: string;
+	}> {
+		const out: Array<{
+			id: string;
+			parentId: string | null;
+			label: string;
+			type: 'main' | 'subagent';
+			status: 'idle' | 'working' | 'done' | 'error';
+			sessionId?: string;
+			traceId?: string;
+			eventId?: string;
+		}> = [];
+
+		let subIndex = 0;
+		const stack: Array<{ id: string; index: number }> = [];
+		const baseId = String(args.parentId || 'root').replace(/[^a-zA-Z0-9_.-]/g, '_');
+
+		for (let i = 0; i < args.toolLines.length; i++) {
+			const line = String(args.toolLines[i] ?? '').trim();
+			const start = line.match(/^→\s+runSubagent\((.*)\)$/);
+			if (start) {
+				subIndex += 1;
+				let desc = `SubAgent #${subIndex}`;
+				const raw = String(start[1] ?? '').trim();
+				try {
+					const parsed = JSON.parse(raw);
+					const d = String(parsed?.description ?? '').trim();
+					if (d) desc = d;
+				} catch {
+					// ignore malformed previews
+				}
+
+				const parent = stack.length ? stack[stack.length - 1].id : args.parentId;
+				const nodeId = `${baseId}.subagent.${subIndex}`;
+				out.push({
+					id: nodeId,
+					parentId: parent,
+					label: desc,
+					type: 'subagent',
+					status: 'working',
+					sessionId: args.sessionId,
+					traceId: args.traceId,
+					eventId: `evt_subagent_start_${i + 1}`
+				});
+				stack.push({ id: nodeId, index: out.length - 1 });
+				continue;
+			}
+
+			if (/^←\s+runSubagent:\s*/.test(line)) {
+				const current = stack.pop();
+				if (!current) continue;
+				const preview = line.replace(/^←\s+runSubagent:\s*/, '').trim();
+				const nextStatus: 'done' | 'error' = /error|failed|exception/i.test(preview) ? 'error' : 'done';
+				out[current.index] = {
+					...out[current.index],
+					status: nextStatus,
+					eventId: `evt_subagent_end_${i + 1}`
+				};
+			}
+		}
+
+		return out;
+	}
+
+	private async readSessionToolTraceLines(sessionId: string): Promise<string[]> {
+		const sid = String(sessionId ?? '').trim();
+		if (!sid) return [];
+
+		const hit = this.subagentTraceCache.get(sid);
+		if (hit && Date.now() - hit.atMs <= 5_000) return hit.lines;
+
+		try {
+			const fileUri = vscode.Uri.joinPath(this.getHistoryDirUri(), `${sid}.jsonl`);
+			const raw = Buffer.from(await vscode.workspace.fs.readFile(fileUri)).toString('utf8');
+			const lines = raw.split(/\r?\n/).filter((l) => l.trim().length > 0);
+			const toolLines: string[] = [];
+			for (const line of lines) {
+				try {
+					const ev = JSON.parse(line);
+					if (String(ev?.kind ?? '') !== 'tool_trace') continue;
+					const text = String(ev?.text ?? '').trim();
+					if (text) toolLines.push(text);
+				} catch {
+					// ignore malformed lines
+				}
+			}
+			this.subagentTraceCache.set(sid, { atMs: Date.now(), lines: toolLines });
+			return toolLines;
+		} catch {
+			return [];
+		}
+	}
+
+	private async postSubagentTree(state: ChatHostState): Promise<void> {
 		const sessionId = String(state.historySessionId ?? '').trim() || undefined;
 		const traceId = sessionId ? `trc_${sessionId}` : 'trc_live';
 
@@ -5429,51 +5536,38 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			.filter((item) => (item as any)?.role === 'tool')
 			.map((item) => String((item as any)?.text ?? '').trim())
 			.filter(Boolean);
+		nodes.push(...this.extractSubagentNodesFromToolLines({ toolLines, parentId: 'agent.root', sessionId, traceId }));
 
-		let subIndex = 0;
-		const stack: Array<{ id: string; index: number }> = [];
+		if (state.kind === 'sidebar' && this.isChatHistoryEnabled()) {
+			const sessions = await this.listStoredHistorySessions();
+			const recent = sessions
+				.filter((s) => String(s.sessionId ?? '').trim() && String(s.sessionId) !== String(sessionId ?? ''))
+				.slice(0, 3);
 
-		for (let i = 0; i < toolLines.length; i++) {
-			const line = toolLines[i];
-			const start = line.match(/^→\s+runSubagent\((.*)\)$/);
-			if (start) {
-				subIndex += 1;
-				let desc = `SubAgent #${subIndex}`;
-				const raw = String(start[1] ?? '').trim();
-				try {
-					const parsed = JSON.parse(raw);
-					const d = String(parsed?.description ?? '').trim();
-					if (d) desc = d;
-				} catch {
-					// ignore malformed previews
-				}
-
-				const parent = stack.length ? stack[stack.length - 1].id : 'agent.root';
-				const nodeId = `subagent.${subIndex}`;
+			for (const sess of recent) {
+				const sid = String(sess.sessionId ?? '').trim();
+				if (!sid) continue;
+				const rootId = `session.${sid}`;
+				const title = String(sess.title ?? '').trim() || sid;
 				nodes.push({
-					id: nodeId,
-					parentId: parent,
-					label: desc,
-					type: 'subagent',
-					status: 'working',
-					sessionId,
-					traceId,
-					eventId: `evt_subagent_start_${i + 1}`
+					id: rootId,
+					parentId: null,
+					label: `History · ${title}`,
+					type: 'main',
+					status: 'idle',
+					sessionId: sid,
+					traceId: `trc_${sid}`,
+					eventId: `evt_session_${sid}`
 				});
-				stack.push({ id: nodeId, index: nodes.length - 1 });
-				continue;
-			}
-
-			if (/^←\s+runSubagent:\s*/.test(line)) {
-				const current = stack.pop();
-				if (!current) continue;
-				const preview = line.replace(/^←\s+runSubagent:\s*/, '').trim();
-				const nextStatus = /error|failed|exception/i.test(preview) ? 'error' : 'done';
-				nodes[current.index] = {
-					...nodes[current.index],
-					status: nextStatus,
-					eventId: `evt_subagent_end_${i + 1}`
-				};
+				const lines = await this.readSessionToolTraceLines(sid);
+				nodes.push(
+					...this.extractSubagentNodesFromToolLines({
+						toolLines: lines,
+						parentId: rootId,
+						sessionId: sid,
+						traceId: `trc_${sid}`
+					})
+				);
 			}
 		}
 
@@ -5640,7 +5734,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 				return;
 
 			case 'requestSubagentTree': {
-				this.postSubagentTree(state);
+				await this.postSubagentTree(state);
 				return;
 			}
 
@@ -6352,7 +6446,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			postToolTrace: (toolText) => {
 				this.postToHost(state, { type: 'chatAppend', role: 'tool', text: toolText });
 				state.transcript.push({ role: 'tool', text: toolText });
-				this.postSubagentTree(state);
+				void this.postSubagentTree(state);
 				void this.appendHistory(state, {
 					kind: 'tool_trace',
 					text: toolText,
@@ -6462,7 +6556,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			postToolTrace: (toolText) => {
 				this.postToHost(state, { type: 'chatAppend', role: 'tool', text: toolText });
 				state.transcript.push({ role: 'tool', text: toolText });
-				this.postSubagentTree(state);
+				void this.postSubagentTree(state);
 				void this.appendHistory(state, {
 					kind: 'tool_trace',
 					text: toolText,
@@ -6757,7 +6851,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 				postToolTrace: (toolText) => {
 					this.postToHost(state, { type: 'chatAppend', role: 'tool', text: toolText });
 					state.transcript.push({ role: 'tool', text: toolText });
-					this.postSubagentTree(state);
+					void this.postSubagentTree(state);
 					void this.appendHistory(state, {
 						kind: 'tool_trace',
 						text: toolText,

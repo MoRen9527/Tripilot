@@ -355,7 +355,7 @@
       traceId: node.traceId,
       sessionId: node.sessionId,
       status: node.status,
-      source: 'subagent-tree-mvp'
+      source: 'subagent-tree-live'
     });
     renderSubagentTree();
   }
