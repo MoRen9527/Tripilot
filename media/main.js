@@ -281,6 +281,7 @@
   let subagentTreeListEl = null;
   let subagentTreeDetailEl = null;
   let selectedSubagentNodeId = null;
+  let subagentTreeNodes = [];
 
   function scheduleRenderSessions() {
     if (renderSessionsRaf) cancelAnimationFrame(renderSessionsRaf);
@@ -329,56 +330,6 @@
     return subagentTreeWrapEl;
   }
 
-  function buildMvpSubagentNodes() {
-    const allSessions = Array.isArray(sessionState.sessions) ? sessionState.sessions : [];
-    const active = allSessions.find((s) => !!s?.isActive) || allSessions[0] || null;
-    const sessionId = String(active?.sessionId || 'session_mvp_01');
-    const traceId = 'trc_phase3_mvp_01';
-
-    return [
-      {
-        id: 'agent.root',
-        parentId: null,
-        label: active?.title ? `Agent VM · ${active.title}` : 'Agent VM',
-        type: 'main',
-        status: isBusy ? 'working' : 'idle',
-        sessionId,
-        traceId,
-        eventId: 'evt_root_state_changed'
-      },
-      {
-        id: 'agent.plan',
-        parentId: 'agent.root',
-        label: 'SubAgent Planner',
-        type: 'subagent',
-        status: 'done',
-        sessionId,
-        traceId,
-        eventId: 'evt_plan_finished'
-      },
-      {
-        id: 'agent.retrieval',
-        parentId: 'agent.root',
-        label: 'SubAgent Retrieval',
-        type: 'subagent',
-        status: 'done',
-        sessionId,
-        traceId,
-        eventId: 'evt_retrieval_message'
-      },
-      {
-        id: 'agent.render',
-        parentId: 'agent.root',
-        label: 'SubAgent Render',
-        type: 'subagent',
-        status: 'working',
-        sessionId,
-        traceId,
-        eventId: 'evt_render_started'
-      }
-    ];
-  }
-
   function flattenSubagentNodes(nodes, parentId, depth, out) {
     const pid = parentId == null ? null : String(parentId);
     for (const node of nodes) {
@@ -413,7 +364,7 @@
     ensureSubagentTreePanel();
     if (!subagentTreeListEl) return;
 
-    const nodes = buildMvpSubagentNodes();
+    const nodes = Array.isArray(subagentTreeNodes) ? subagentTreeNodes : [];
     const ordered = [];
     flattenSubagentNodes(nodes, null, 0, ordered);
 
@@ -421,7 +372,7 @@
     if (!ordered.length) {
       const empty = document.createElement('div');
       empty.className = 'subagentTreeEmpty';
-      empty.textContent = '暂无子代理关系数据。';
+      empty.textContent = '暂无子代理关系数据（等待真实事件）。';
       subagentTreeListEl.appendChild(empty);
       return;
     }
@@ -1165,6 +1116,7 @@
     updateSendButton();
     updateContinueButton();
     renderSubagentTree();
+    uiAction('requestSubagentTree');
   }
 
   function sendCurrent() {
@@ -1916,9 +1868,11 @@
 		return;
     case 'chatToolInvocationBegin':
     onToolInvocationBegin(msg);
+    uiAction('requestSubagentTree');
     return;
     case 'chatToolInvocationEnd':
     onToolInvocationEnd(msg);
+    uiAction('requestSubagentTree');
     return;
     case 'chatTodoList':
     renderTodoList(msg.todoList, msg.note);
@@ -1942,6 +1896,12 @@
           sessions: Array.isArray(msg.sessions) ? msg.sessions : []
         };
         renderSessions();
+        uiAction('requestSubagentTree');
+        renderSubagentTree();
+        return;
+
+      case 'subagentTree':
+        subagentTreeNodes = Array.isArray(msg.nodes) ? msg.nodes : [];
         renderSubagentTree();
         return;
 
@@ -2197,5 +2157,6 @@
   if (!hostIsEditor) {
     renderSubagentTree();
     uiAction('requestSessions');
+    uiAction('requestSubagentTree');
   }
 })();
