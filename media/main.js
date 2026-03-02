@@ -286,7 +286,34 @@
   let subagentTreeNodes = [];
   let subagentTreeScope = 'all';
   let subagentTreeStatus = 'all';
-  const collapsedSubagentNodeIds = new Set();
+  const collapsedSubagentNodeIdsBySession = new Map();
+
+  function getNodeSessionKey(node) {
+    const sid = node?.sessionId == null ? '' : String(node.sessionId).trim();
+    return sid || 'unknown';
+  }
+
+  function getCollapsedSetForSessionKey(sessionKey) {
+    const key = String(sessionKey || 'unknown');
+    let set = collapsedSubagentNodeIdsBySession.get(key);
+    if (!set) {
+      set = new Set();
+      collapsedSubagentNodeIdsBySession.set(key, set);
+    }
+    return set;
+  }
+
+  function isSubagentNodeCollapsed(node) {
+    return getCollapsedSetForSessionKey(getNodeSessionKey(node)).has(String(node?.id || ''));
+  }
+
+  function setSubagentNodeCollapsed(node, collapsed) {
+    const id = String(node?.id || '');
+    if (!id) return;
+    const set = getCollapsedSetForSessionKey(getNodeSessionKey(node));
+    if (collapsed) set.add(id);
+    else set.delete(id);
+  }
 
   function getCollapsibleSubagentNodeIds(nodes) {
     return Array.from(
@@ -300,8 +327,11 @@
 
   function collapseAllSubagentNodes() {
     const nodes = filterSubagentNodes(subagentTreeNodes);
+    const byId = new Map(nodes.map((node) => [String(node?.id || ''), node]));
     for (const id of getCollapsibleSubagentNodeIds(nodes)) {
-      collapsedSubagentNodeIds.add(id);
+      const node = byId.get(id);
+      if (!node) continue;
+      setSubagentNodeCollapsed(node, true);
     }
     renderSubagentTree();
   }
@@ -309,8 +339,10 @@
   function expandAllSubagentNodes() {
     const nodes = filterSubagentNodes(subagentTreeNodes);
     const currentIds = new Set(getCollapsibleSubagentNodeIds(nodes));
-    for (const id of Array.from(collapsedSubagentNodeIds)) {
-      if (currentIds.has(id)) collapsedSubagentNodeIds.delete(id);
+    for (const node of nodes) {
+      const id = String(node?.id || '');
+      if (!id || !currentIds.has(id)) continue;
+      setSubagentNodeCollapsed(node, false);
     }
     renderSubagentTree();
   }
@@ -419,7 +451,7 @@
       const npid = node?.parentId == null ? null : String(node.parentId);
       if (npid !== pid) continue;
       out.push({ node, depth });
-      if (collapsedSubagentNodeIds.has(String(node.id))) continue;
+      if (isSubagentNodeCollapsed(node)) continue;
       flattenSubagentNodes(nodes, String(node.id), depth + 1, out);
     }
   }
@@ -483,8 +515,23 @@
     const nodes = filterSubagentNodes(subagentTreeNodes);
     const nodeIds = new Set(nodes.map((node) => String(node?.id || '')).filter(Boolean));
     const parentIds = new Set(getCollapsibleSubagentNodeIds(nodes));
-    for (const id of Array.from(collapsedSubagentNodeIds)) {
-      if (!nodeIds.has(id)) collapsedSubagentNodeIds.delete(id);
+
+    const validBySession = new Map();
+    for (const node of nodes) {
+      const key = getNodeSessionKey(node);
+      if (!validBySession.has(key)) validBySession.set(key, new Set());
+      validBySession.get(key).add(String(node?.id || ''));
+    }
+    for (const [key, set] of collapsedSubagentNodeIdsBySession.entries()) {
+      const valid = validBySession.get(key);
+      if (!valid) {
+        collapsedSubagentNodeIdsBySession.delete(key);
+        continue;
+      }
+      for (const id of Array.from(set)) {
+        if (!valid.has(id) || !nodeIds.has(id)) set.delete(id);
+      }
+      if (!set.size) collapsedSubagentNodeIdsBySession.delete(key);
     }
     const ordered = [];
     flattenSubagentNodes(nodes, null, 0, ordered);
@@ -506,7 +553,7 @@
       const hasChildren = parentIds.has(String(item.node.id));
       if (hasChildren) {
         const toggleBtn = document.createElement('button');
-        const isCollapsed = collapsedSubagentNodeIds.has(String(item.node.id));
+        const isCollapsed = isSubagentNodeCollapsed(item.node);
         toggleBtn.className = 'subagentTreeToggle ghost';
         toggleBtn.type = 'button';
         toggleBtn.textContent = isCollapsed ? '▸' : '▾';
@@ -515,9 +562,7 @@
         toggleBtn.addEventListener('click', (e) => {
           e.preventDefault();
           e.stopPropagation();
-          const id = String(item.node.id);
-          if (collapsedSubagentNodeIds.has(id)) collapsedSubagentNodeIds.delete(id);
-          else collapsedSubagentNodeIds.add(id);
+          setSubagentNodeCollapsed(item.node, !isSubagentNodeCollapsed(item.node));
           renderSubagentTree();
         });
         row.appendChild(toggleBtn);
@@ -1981,7 +2026,7 @@
 		sessionsUiMode = 'auto';
 		detailSessionId = null;
     selectedSubagentNodeId = null;
-    collapsedSubagentNodeIds.clear();
+    collapsedSubagentNodeIdsBySession.clear();
 		scheduleRenderSessions();
         renderSubagentTree();
         // Also clear approval UI state.
