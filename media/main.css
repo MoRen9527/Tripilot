@@ -410,6 +410,11 @@ body {
   font-size: 11px;
 }
 
+.subagentTreeAction:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .subagentTreeList {
   display: flex;
   flex-direction: column;

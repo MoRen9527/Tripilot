@@ -282,6 +282,7 @@
   let subagentTreeDetailEl = null;
   let subagentTreeScopeEl = null;
   let subagentTreeStatusEl = null;
+  let subagentTreeFocusPathBtnEl = null;
   let selectedSubagentNodeId = null;
   let subagentTreeNodes = [];
   let subagentTreeScope = 'all';
@@ -349,12 +350,18 @@
 
   function expandSelectedSubagentPath() {
     const selectedId = String(selectedSubagentNodeId || '').trim();
-    if (!selectedId) return;
+    if (!selectedId) {
+      if (subagentTreeDetailEl) subagentTreeDetailEl.textContent = '请先在关系树中选中一个节点，再使用“仅展开选中路径”。';
+      return;
+    }
 
     const nodes = filterSubagentNodes(subagentTreeNodes);
     const byId = new Map(nodes.map((node) => [String(node?.id || ''), node]));
     const selected = byId.get(selectedId);
-    if (!selected) return;
+    if (!selected) {
+      if (subagentTreeDetailEl) subagentTreeDetailEl.textContent = '当前过滤范围内未找到选中节点，请调整范围/状态后重试。';
+      return;
+    }
 
     const expandableIds = new Set(getCollapsibleSubagentNodeIds(nodes));
     const pathParentIds = new Set();
@@ -444,12 +451,12 @@
     expandAllBtn.title = '展开当前范围内所有可折叠节点';
     expandAllBtn.addEventListener('click', () => expandAllSubagentNodes());
 
-    const focusPathBtn = document.createElement('button');
-    focusPathBtn.className = 'subagentTreeAction ghost';
-    focusPathBtn.type = 'button';
-    focusPathBtn.textContent = '仅展开选中路径';
-    focusPathBtn.title = '保留选中节点祖先路径展开，其他分支折叠';
-    focusPathBtn.addEventListener('click', () => expandSelectedSubagentPath());
+    subagentTreeFocusPathBtnEl = document.createElement('button');
+    subagentTreeFocusPathBtnEl.className = 'subagentTreeAction ghost';
+    subagentTreeFocusPathBtnEl.type = 'button';
+    subagentTreeFocusPathBtnEl.textContent = '仅展开选中路径';
+    subagentTreeFocusPathBtnEl.title = '保留选中节点祖先路径展开，其他分支折叠';
+    subagentTreeFocusPathBtnEl.addEventListener('click', () => expandSelectedSubagentPath());
 
     const refresh = document.createElement('button');
     refresh.className = 'icon ghost';
@@ -463,7 +470,7 @@
     controls.appendChild(subagentTreeStatusEl);
     controls.appendChild(collapseAllBtn);
     controls.appendChild(expandAllBtn);
-    controls.appendChild(focusPathBtn);
+    controls.appendChild(subagentTreeFocusPathBtnEl);
     header.appendChild(title);
     header.appendChild(controls);
     header.appendChild(refresh);
@@ -550,6 +557,15 @@
     if (!subagentTreeListEl) return;
 
     const nodes = filterSubagentNodes(subagentTreeNodes);
+    const selectedId = String(selectedSubagentNodeId || '').trim();
+    const selectedVisible = !!selectedId && nodes.some((node) => String(node?.id || '') === selectedId);
+    if (subagentTreeFocusPathBtnEl) {
+      subagentTreeFocusPathBtnEl.disabled = !selectedVisible;
+      subagentTreeFocusPathBtnEl.title = selectedVisible
+        ? '保留选中节点祖先路径展开，其他分支折叠'
+        : '请先选中当前过滤范围内的一个节点';
+    }
+
     const nodeIds = new Set(nodes.map((node) => String(node?.id || '')).filter(Boolean));
     const parentIds = new Set(getCollapsibleSubagentNodeIds(nodes));
 
