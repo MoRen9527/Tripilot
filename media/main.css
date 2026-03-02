@@ -375,6 +375,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 6px;
   margin-bottom: 6px;
 }
 
@@ -383,6 +384,23 @@ body {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--vscode-descriptionForeground);
+}
+
+.subagentTreeControls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.subagentTreeSelect {
+  border: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border-radius: 6px;
+  font-size: 11px;
+  padding: 2px 6px;
+  max-width: 128px;
 }
 
 .subagentTreeList {
@@ -431,7 +449,9 @@ body {
   margin-top: 6px;
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
-  word-break: break-all;
+  word-break: break-word;
+  display: grid;
+  gap: 2px;
 }
 
 .subagentTreeEmpty {

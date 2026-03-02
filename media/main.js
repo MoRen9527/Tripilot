@@ -280,8 +280,12 @@
   let subagentTreeWrapEl = null;
   let subagentTreeListEl = null;
   let subagentTreeDetailEl = null;
+  let subagentTreeScopeEl = null;
+  let subagentTreeStatusEl = null;
   let selectedSubagentNodeId = null;
   let subagentTreeNodes = [];
+  let subagentTreeScope = 'all';
+  let subagentTreeStatus = 'all';
 
   function scheduleRenderSessions() {
     if (renderSessionsRaf) cancelAnimationFrame(renderSessionsRaf);
@@ -303,7 +307,39 @@
 
     const title = document.createElement('div');
     title.className = 'subagentTreeTitle';
-    title.textContent = 'SUBAGENT TREE (MVP)';
+    title.textContent = 'SUBAGENT TREE (LIVE)';
+
+    const controls = document.createElement('div');
+    controls.className = 'subagentTreeControls';
+
+    subagentTreeScopeEl = document.createElement('select');
+    subagentTreeScopeEl.className = 'subagentTreeSelect';
+    subagentTreeScopeEl.title = '关系树范围';
+    subagentTreeScopeEl.innerHTML = [
+      '<option value="all">范围: 全部</option>',
+      '<option value="current">范围: 当前会话</option>',
+      '<option value="history">范围: 历史会话</option>'
+    ].join('');
+    subagentTreeScopeEl.value = subagentTreeScope;
+    subagentTreeScopeEl.addEventListener('change', () => {
+      subagentTreeScope = String(subagentTreeScopeEl?.value || 'all');
+      renderSubagentTree();
+    });
+
+    subagentTreeStatusEl = document.createElement('select');
+    subagentTreeStatusEl.className = 'subagentTreeSelect';
+    subagentTreeStatusEl.title = '关系树状态过滤';
+    subagentTreeStatusEl.innerHTML = [
+      '<option value="all">状态: 全部</option>',
+      '<option value="working">状态: 进行中</option>',
+      '<option value="done">状态: 完成</option>',
+      '<option value="error">状态: 异常</option>'
+    ].join('');
+    subagentTreeStatusEl.value = subagentTreeStatus;
+    subagentTreeStatusEl.addEventListener('change', () => {
+      subagentTreeStatus = String(subagentTreeStatusEl?.value || 'all');
+      renderSubagentTree();
+    });
 
     const refresh = document.createElement('button');
     refresh.className = 'icon ghost';
@@ -313,7 +349,10 @@
     refresh.innerHTML = '<span class="codicon codicon-refresh"></span>';
     refresh.addEventListener('click', () => renderSubagentTree());
 
+    controls.appendChild(subagentTreeScopeEl);
+    controls.appendChild(subagentTreeStatusEl);
     header.appendChild(title);
+    header.appendChild(controls);
     header.appendChild(refresh);
 
     subagentTreeListEl = document.createElement('div');
@@ -342,7 +381,39 @@
 
   function setSubagentDetail(node) {
     if (!subagentTreeDetailEl || !node) return;
-    subagentTreeDetailEl.textContent = `node=${node.id} · event=${node.eventId} · trace=${node.traceId} · session=${node.sessionId} · status=${node.status}`;
+    const active = (Array.isArray(sessionState.sessions) ? sessionState.sessions : []).find((s) => !!s?.isActive);
+    const activeSessionId = active?.sessionId ? String(active.sessionId) : '';
+    const nodeSessionId = node?.sessionId ? String(node.sessionId) : '';
+    const source = nodeSessionId && activeSessionId && nodeSessionId === activeSessionId ? 'current' : 'history';
+    const lines = [
+      ['label', node?.label],
+      ['status', node?.status],
+      ['source', source],
+      ['session', node?.sessionId],
+      ['trace', node?.traceId],
+      ['event', node?.eventId],
+      ['node', node?.id]
+    ];
+    subagentTreeDetailEl.innerHTML = lines
+      .map(([k, v]) => `<div><strong>${k}</strong>: ${escapeHtml(String(v ?? '-'))}</div>`)
+      .join('');
+  }
+
+  function filterSubagentNodes(nodes) {
+    const list = Array.isArray(nodes) ? nodes : [];
+    const active = (Array.isArray(sessionState.sessions) ? sessionState.sessions : []).find((s) => !!s?.isActive);
+    const activeSessionId = active?.sessionId ? String(active.sessionId) : '';
+
+    const byScope = list.filter((node) => {
+      const sid = node?.sessionId ? String(node.sessionId) : '';
+      const isCurrent = !!sid && !!activeSessionId && sid === activeSessionId;
+      if (subagentTreeScope === 'current') return isCurrent;
+      if (subagentTreeScope === 'history') return !isCurrent;
+      return true;
+    });
+
+    if (subagentTreeStatus === 'all') return byScope;
+    return byScope.filter((node) => String(node?.status || '') === subagentTreeStatus || String(node?.type || '') === 'main');
   }
 
   function jumpToSubagentEvent(node) {
@@ -364,7 +435,7 @@
     ensureSubagentTreePanel();
     if (!subagentTreeListEl) return;
 
-    const nodes = Array.isArray(subagentTreeNodes) ? subagentTreeNodes : [];
+    const nodes = filterSubagentNodes(subagentTreeNodes);
     const ordered = [];
     flattenSubagentNodes(nodes, null, 0, ordered);
 
