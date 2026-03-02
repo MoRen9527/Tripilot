@@ -283,6 +283,7 @@
   let subagentTreeScopeEl = null;
   let subagentTreeStatusEl = null;
   let subagentTreeFocusPathBtnEl = null;
+  let subagentTreeStatsEl = null;
   let selectedSubagentNodeId = null;
   let subagentTreeNodes = [];
   let subagentTreeScope = 'all';
@@ -405,6 +406,10 @@
     title.className = 'subagentTreeTitle';
     title.textContent = 'SUBAGENT TREE (LIVE)';
 
+    subagentTreeStatsEl = document.createElement('div');
+    subagentTreeStatsEl.className = 'subagentTreeStats';
+    subagentTreeStatsEl.textContent = 'W:0 · D:0 · E:0';
+
     const controls = document.createElement('div');
     controls.className = 'subagentTreeControls';
 
@@ -472,6 +477,7 @@
     controls.appendChild(expandAllBtn);
     controls.appendChild(subagentTreeFocusPathBtnEl);
     header.appendChild(title);
+    header.appendChild(subagentTreeStatsEl);
     header.appendChild(controls);
     header.appendChild(refresh);
 
@@ -557,6 +563,16 @@
     if (!subagentTreeListEl) return;
 
     const nodes = filterSubagentNodes(subagentTreeNodes);
+    const counters = { working: 0, done: 0, error: 0 };
+    for (const node of nodes) {
+      if (String(node?.type || '') !== 'subagent') continue;
+      const st = String(node?.status || '');
+      if (st === 'working' || st === 'done' || st === 'error') counters[st] += 1;
+    }
+    if (subagentTreeStatsEl) {
+      subagentTreeStatsEl.textContent = `W:${counters.working} · D:${counters.done} · E:${counters.error}`;
+    }
+
     const selectedId = String(selectedSubagentNodeId || '').trim();
     const selectedVisible = !!selectedId && nodes.some((node) => String(node?.id || '') === selectedId);
     if (subagentTreeFocusPathBtnEl) {

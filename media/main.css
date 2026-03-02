@@ -386,6 +386,12 @@ body {
   color: var(--vscode-descriptionForeground);
 }
 
+.subagentTreeStats {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+}
+
 .subagentTreeControls {
   display: flex;
   align-items: center;
