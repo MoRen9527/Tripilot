@@ -347,6 +347,35 @@
     renderSubagentTree();
   }
 
+  function expandSelectedSubagentPath() {
+    const selectedId = String(selectedSubagentNodeId || '').trim();
+    if (!selectedId) return;
+
+    const nodes = filterSubagentNodes(subagentTreeNodes);
+    const byId = new Map(nodes.map((node) => [String(node?.id || ''), node]));
+    const selected = byId.get(selectedId);
+    if (!selected) return;
+
+    const expandableIds = new Set(getCollapsibleSubagentNodeIds(nodes));
+    const pathParentIds = new Set();
+
+    let cursor = selected;
+    while (cursor?.parentId != null) {
+      const parentId = String(cursor.parentId);
+      if (!parentId) break;
+      pathParentIds.add(parentId);
+      cursor = byId.get(parentId);
+    }
+
+    for (const id of expandableIds) {
+      const node = byId.get(id);
+      if (!node) continue;
+      setSubagentNodeCollapsed(node, !pathParentIds.has(id));
+    }
+
+    renderSubagentTree();
+  }
+
   function scheduleRenderSessions() {
     if (renderSessionsRaf) cancelAnimationFrame(renderSessionsRaf);
     renderSessionsRaf = requestAnimationFrame(() => {
@@ -415,6 +444,13 @@
     expandAllBtn.title = '展开当前范围内所有可折叠节点';
     expandAllBtn.addEventListener('click', () => expandAllSubagentNodes());
 
+    const focusPathBtn = document.createElement('button');
+    focusPathBtn.className = 'subagentTreeAction ghost';
+    focusPathBtn.type = 'button';
+    focusPathBtn.textContent = '仅展开选中路径';
+    focusPathBtn.title = '保留选中节点祖先路径展开，其他分支折叠';
+    focusPathBtn.addEventListener('click', () => expandSelectedSubagentPath());
+
     const refresh = document.createElement('button');
     refresh.className = 'icon ghost';
     refresh.type = 'button';
@@ -427,6 +463,7 @@
     controls.appendChild(subagentTreeStatusEl);
     controls.appendChild(collapseAllBtn);
     controls.appendChild(expandAllBtn);
+    controls.appendChild(focusPathBtn);
     header.appendChild(title);
     header.appendChild(controls);
     header.appendChild(refresh);
