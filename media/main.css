@@ -551,6 +551,10 @@ body {
   border-color: var(--vscode-inputValidation-errorBorder);
 }
 
+.sceneStateRow.is-recovered {
+  box-shadow: inset 0 0 0 1px var(--vscode-testing-iconPassed);
+}
+
 .sceneStateEmpty {
   font-size: 11px;
   color: var(--vscode-descriptionForeground);

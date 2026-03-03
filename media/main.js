@@ -730,9 +730,17 @@
 
     for (const station of stations.slice(0, 8)) {
       const row = document.createElement('div');
-      row.className = `sceneStateRow is-${String(station?.state || 'idle')}`;
-      row.textContent = `${String(station?.label || station?.id || 'station')} · ${String(station?.state || 'idle')}`;
-      row.title = `kind=${String(station?.kind || 'subagent')} event=${String(station?.eventId || '-')}`;
+      const recovered = !!station?.recovered;
+      row.className = `sceneStateRow is-${String(station?.state || 'idle')}${recovered ? ' is-recovered' : ''}`;
+      row.textContent = `${String(station?.label || station?.id || 'station')} · ${String(station?.state || 'idle')}${recovered ? ' · recovered' : ''}`;
+      row.title = [
+        `kind=${String(station?.kind || 'subagent')}`,
+        `event=${String(station?.eventId || '-')}`,
+        `seq=${String(station?.eventSeq ?? '-')}`,
+        `mappingKey=${String(station?.mappingKey || '-')}`,
+        `session=${String(station?.sessionId || '-')}`,
+        `trace=${String(station?.traceId || '-')}`
+      ].join(' | ');
       sceneListEl.appendChild(row);
     }
   }

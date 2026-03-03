@@ -430,10 +430,15 @@ type WebviewOutboundMessageExtended =
 				updatedAt: number;
 				workstations: Array<{
 					id: string;
+					mappingKey: string;
 					label: string;
 					state: 'idle' | 'working' | 'waiting' | 'failed';
+					recovered?: boolean;
 					nodeId?: string;
 					eventId?: string;
+					eventSeq?: number;
+					sessionId?: string;
+					traceId?: string;
 					kind: 'subagent' | 'approval';
 				}>;
 		  };
@@ -528,10 +533,15 @@ type ChatHostState = {
 		updatedAt: number;
 		workstations: Array<{
 			id: string;
+			mappingKey: string;
 			label: string;
 			state: 'idle' | 'working' | 'waiting' | 'failed';
+			recovered?: boolean;
 			nodeId?: string;
 			eventId?: string;
+			eventSeq?: number;
+			sessionId?: string;
+			traceId?: string;
 			kind: 'subagent' | 'approval';
 		}>;
 	};
@@ -5650,11 +5660,21 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			eventSeq?: number;
 		}>
 	): void {
+		const normalizeKeyPart = (value: string | undefined): string => {
+			return String(value ?? '')
+				.toLowerCase()
+				.trim()
+				.replace(/\s+/g, '-')
+				.replace(/[^a-z0-9._-]/g, '_')
+				.slice(0, 80);
+		};
+
 		const hasFailed = nodes.some((n) => n.type === 'subagent' && n.status === 'error');
 		const hasWorking = nodes.some((n) => n.type === 'subagent' && n.status === 'working');
 		const hasWaitingApproval =
 			!!this.pendingEditApproval &&
 			(this.pendingEditApproval.originHost === state.kind || this.pendingEditApproval.originHost === 'sidebar');
+		const prevStations = new Map((state.sceneState?.workstations ?? []).map((s) => [String(s.id), s]));
 
 		let machineState: 'idle' | 'working' | 'waiting' | 'failed' = 'idle';
 		let reason = 'no-active-signals';
@@ -5671,36 +5691,76 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 
 		const workstations: Array<{
 			id: string;
+			mappingKey: string;
 			label: string;
 			state: 'idle' | 'working' | 'waiting' | 'failed';
+			recovered?: boolean;
 			nodeId?: string;
 			eventId?: string;
+			eventSeq?: number;
+			sessionId?: string;
+			traceId?: string;
 			kind: 'subagent' | 'approval';
 		}> = [];
+		let recoveredCount = 0;
 
 		for (const n of nodes) {
 			if (n.type !== 'subagent') continue;
 			const mapped: 'idle' | 'working' | 'waiting' | 'failed' =
 				n.status === 'error' ? 'failed' : n.status === 'working' ? 'working' : 'idle';
+			const sid = String(n.sessionId ?? '').trim() || 'live';
+			const tid = String(n.traceId ?? '').trim() || 'trace';
+			const labelKey = normalizeKeyPart(String(n.label ?? n.id ?? 'station')) || normalizeKeyPart(String(n.id));
+			const stationId = `ws.subagent.${sid}.${tid}.${labelKey}`;
+			const prev = prevStations.get(stationId);
+			const recovered = !!prev && prev.state === 'failed' && mapped !== 'failed';
+			if (recovered) recoveredCount += 1;
 			workstations.push({
-				id: n.id,
+				id: stationId,
+				mappingKey: `${sid}|${tid}|${String(n.eventId ?? '')}|${String(n.eventSeq ?? '')}`,
 				label: n.label,
 				state: mapped,
+				recovered,
 				nodeId: n.id,
 				eventId: n.eventId,
+				eventSeq: n.eventSeq,
+				sessionId: n.sessionId,
+				traceId: n.traceId,
 				kind: 'subagent'
 			});
 		}
 
 		if (hasWaitingApproval && this.pendingEditApproval) {
+			const approvalId = `approval.${this.pendingEditApproval.requestId}`;
 			workstations.unshift({
-				id: `approval.${this.pendingEditApproval.requestId}`,
+				id: approvalId,
+				mappingKey: approvalId,
 				label: 'Approval Gate',
 				state: 'waiting',
 				eventId: this.pendingEditApproval.requestId,
 				kind: 'approval'
 			});
 		}
+
+		if (!hasFailed && recoveredCount > 0) {
+			if (hasWaitingApproval) {
+				reason = 'recovered-awaiting-approval';
+			} else if (state.isBusy || hasWorking) {
+				machineState = 'working';
+				reason = 'recovered-and-running';
+			} else {
+				machineState = 'idle';
+				reason = 'recovered-to-idle';
+			}
+		}
+
+		const stateRank: Record<'failed' | 'waiting' | 'working' | 'idle', number> = {
+			failed: 0,
+			waiting: 1,
+			working: 2,
+			idle: 3
+		};
+		workstations.sort((a, b) => stateRank[a.state] - stateRank[b.state] || a.label.localeCompare(b.label));
 
 		const next = {
 			machineState,
