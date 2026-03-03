@@ -1,0 +1,9 @@
+services:
+  tripilot-test:
+    build:
+      context: .
+      dockerfile: docker/test.Dockerfile
+    working_dir: /workspace
+    command: npm run test:coverage
+    volumes:
+      - ./:/workspace

@@ -501,6 +501,12 @@
   "scripts": {
     "compile": "npm run check:reference-tools && npm run check:tool-impl && tsc -p .",
     "watch": "npm run check:reference-tools && npm run check:tool-impl && tsc -watch -p .",
+    "test": "npm run test:unit && npm run test:integration",
+    "test:unit": "vitest run tests/unit --coverage",
+    "test:integration": "vitest run tests/integration",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:data:generate": "node tests/fixtures/generate-chat-events.mjs",
     "check:reference-tools": "node scripts/check-reference-tools.js",
     "check:tool-impl": "node scripts/check-tool-implementations.js",
     "package": "vsce package",
@@ -517,6 +523,8 @@
     "@types/node": "^20.11.30",
 	"@types/diff": "^5.2.0",
     "@types/vscode": "^1.96.0",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "vitest": "^3.2.4",
+    "@vitest/coverage-v8": "^3.2.4"
   }
 }

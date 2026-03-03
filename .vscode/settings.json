@@ -59,5 +59,9 @@
 	// 在本仓库开发 Tripilot 时，把它当作纯文本即可避免这些噪声诊断。
 	"files.associations": {
 		"reference/vscode-copilot-chat/package.json": "plaintext"
-	}
+	},
+	"vitest.enable": true,
+	"vitest.commandLine": "npm run test:watch",
+	"testing.automaticallyOpenPeekView": "failureInVisibleDocument",
+	"testing.defaultGutterClickAction": "run"
 }
