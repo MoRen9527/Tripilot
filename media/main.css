@@ -1042,6 +1042,16 @@ body {
   background: var(--vscode-input-background);
 }
 
+.toolInvocation.is-failed {
+  border-color: var(--vscode-testing-iconFailed);
+}
+
+.toolInvocation.is-focused,
+.msg-part-edits.is-focused {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+
 .toolInvocationSummary {
   cursor: pointer;
   display: flex;
