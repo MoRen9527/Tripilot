@@ -555,6 +555,31 @@ body {
   box-shadow: inset 0 0 0 1px var(--vscode-testing-iconPassed);
 }
 
+.sceneStateRow.is-focused {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+
+.sceneStateRow.is-tool.is-started {
+  border-color: var(--vscode-charts-blue);
+}
+
+.sceneStateRow.is-tool.is-finished {
+  border-color: var(--vscode-testing-iconPassed);
+}
+
+.sceneStateRow.is-tool.is-failed {
+  border-color: var(--vscode-testing-iconFailed);
+}
+
+.msg-part-edits.timelineApproval-request {
+  border-left: 2px solid var(--vscode-testing-iconQueued);
+}
+
+.msg-part-edits.timelineApproval-resolved {
+  border-left: 2px solid var(--vscode-testing-iconPassed);
+}
+
 .sceneStateEmpty {
   font-size: 11px;
   color: var(--vscode-descriptionForeground);

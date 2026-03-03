@@ -722,6 +722,14 @@
     const transition = String(sceneState.transition || 'n/a');
     const latestSeq = Number.isFinite(Number(sceneState.latestEventSeq)) ? Number(sceneState.latestEventSeq) : 0;
     const stations = Array.isArray(sceneState.workstations) ? sceneState.workstations : [];
+    const toolRows = Array.from(sceneToolInvocations.entries())
+      .sort((a, b) => Number(b?.[1]?.atMs || 0) - Number(a?.[1]?.atMs || 0))
+      .slice(0, 6)
+      .map(([invocationId, info]) => ({
+        id: invocationId,
+        label: String(info?.toolName || 'tool'),
+        status: String(info?.status || 'started')
+      }));
     sceneSummaryEl.textContent = `machine=${machine} · reason=${reason} · transition=${transition} · seq=${latestSeq} · stations=${stations.length}`;
 
     sceneListEl.innerHTML = '';
@@ -736,7 +744,8 @@
     for (const station of stations.slice(0, 8)) {
       const row = document.createElement('div');
       const recovered = !!station?.recovered;
-      row.className = `sceneStateRow is-${String(station?.state || 'idle')}${recovered ? ' is-recovered' : ''}`;
+      const focusHit = sceneFocus.kind === String(station?.kind || 'subagent') && sceneFocus.id === String(station?.eventId || station?.id || '');
+      row.className = `sceneStateRow is-${String(station?.state || 'idle')}${recovered ? ' is-recovered' : ''}${focusHit ? ' is-focused' : ''}`;
       row.textContent = `${String(station?.label || station?.id || 'station')} · ${String(station?.state || 'idle')}${recovered ? ' · recovered' : ''}`;
       row.title = [
         `kind=${String(station?.kind || 'subagent')}`,
@@ -746,6 +755,26 @@
         `session=${String(station?.sessionId || '-')}`,
         `trace=${String(station?.traceId || '-')}`
       ].join(' | ');
+      row.addEventListener('click', () => {
+        if (String(station?.kind || '') === 'approval') {
+          focusTimelineApproval(String(station?.eventId || station?.id || ''));
+          return;
+        }
+        const nodeId = String(station?.nodeId || '').trim();
+        if (!nodeId) return;
+        const node = (Array.isArray(subagentTreeNodes) ? subagentTreeNodes : []).find((n) => String(n?.id || '') === nodeId);
+        if (node) jumpToSubagentEvent(node, { silent: false, source: 'scene-panel' });
+      });
+      sceneListEl.appendChild(row);
+    }
+
+    for (const tool of toolRows) {
+      const focusHit = sceneFocus.kind === 'tool' && sceneFocus.id === String(tool.id);
+      const row = document.createElement('div');
+      row.className = `sceneStateRow is-tool is-${String(tool.status || 'started')}${focusHit ? ' is-focused' : ''}`;
+      row.textContent = `[tool] ${String(tool.label || tool.id)} · ${String(tool.status || 'started')}`;
+      row.title = `invocationId=${String(tool.id)}`;
+      row.addEventListener('click', () => focusTimelineToolInvocation(String(tool.id)));
       sceneListEl.appendChild(row);
     }
   }
@@ -1339,10 +1368,34 @@
   // --- Structured response parts (Copilot-like) ---
   let currentToolGroup = null; // { item, summaryEl, listEl, count, runningCount }
   const toolInvocations = new Map(); // invocationId -> { statusEl, outputEl, rootEl }
+  const sceneToolInvocations = new Map(); // invocationId -> { toolName, status, atMs }
+  let sceneFocus = { kind: '', id: '' };
   let lastTodoCardEl = null;
   let pendingEditsCardByRequestId = new Map();
   let pendingEditModeByRequestId = new Map();
   let checkpointCardsById = new Map();
+
+  function setSceneFocus(kind, id) {
+    sceneFocus = { kind: String(kind || ''), id: String(id || '') };
+    renderSceneStatePanel();
+    sceneWrapEl?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }
+
+  function focusTimelineToolInvocation(invocationId) {
+    const id = String(invocationId || '').trim();
+    if (!id) return;
+    const hit = toolInvocations.get(id);
+    if (!hit?.rootEl) return;
+    if (hit.rootEl.tagName?.toLowerCase?.() === 'details') hit.rootEl.open = true;
+    hit.rootEl.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }
+
+  function focusTimelineApproval(requestId) {
+    const id = String(requestId || '').trim();
+    if (!id) return;
+    const card = pendingEditsCardByRequestId.get(id);
+    card?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }
 
   function appendCheckpointCard(checkpointIdRaw) {
     const checkpointId = String(checkpointIdRaw || '').trim();
@@ -1484,13 +1537,19 @@
     g.runningCount++;
     updateToolGroupSummary();
 
+    const id = String(msg.invocationId || '');
+
     const root = document.createElement('details');
     root.className = 'toolInvocation';
     root.open = false;
-    root.dataset.invocationId = String(msg.invocationId || '');
+    root.dataset.invocationId = id;
 
     const summary = document.createElement('summary');
     summary.className = 'toolInvocationSummary';
+    summary.addEventListener('click', () => {
+      if (!id) return;
+      setSceneFocus('tool', id);
+    });
 
     const nameEl = document.createElement('span');
     nameEl.className = 'toolName';
@@ -1519,8 +1578,15 @@
     g.listEl.appendChild(root);
     messagesEl.scrollTop = messagesEl.scrollHeight;
 
-    const id = String(msg.invocationId || '');
     if (id) toolInvocations.set(id, { statusEl, outputEl: out, rootEl: root });
+    if (id) {
+      sceneToolInvocations.set(id, {
+        toolName: String(msg.toolName || 'tool'),
+        status: 'started',
+        atMs: Date.now()
+      });
+      renderSceneStatePanel();
+    }
   }
 
   function onToolInvocationEnd(msg) {
@@ -1544,6 +1610,16 @@
     if (currentToolGroup) {
       currentToolGroup.runningCount = Math.max(0, (currentToolGroup.runningCount || 0) - 1);
       updateToolGroupSummary();
+    }
+
+    if (id) {
+      const prev = sceneToolInvocations.get(id);
+      sceneToolInvocations.set(id, {
+        toolName: String(msg.toolName || prev?.toolName || 'tool'),
+        status: ok ? 'finished' : 'failed',
+        atMs: Date.now()
+      });
+      renderSceneStatePanel();
     }
   }
 
@@ -1643,6 +1719,10 @@
       pendingEditsCardByRequestId.set(requestId, card);
     }
 	pendingEditModeByRequestId.set(requestId, mode);
+  card.classList.remove('timelineApproval-request', 'timelineApproval-resolved');
+  card.classList.add(mode === 'review' ? 'timelineApproval-resolved' : 'timelineApproval-request');
+  card.dataset.requestId = requestId;
+  card.onclick = () => setSceneFocus('approval', requestId);
     const body = card._editsBody || card.querySelector('.body');
     if (!body) return;
     while (body.children.length > 1) body.removeChild(body.lastChild);
