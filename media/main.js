@@ -304,6 +304,9 @@
   const sceneState = {
     machineState: 'idle',
     reason: 'init',
+    transition: 'init->idle',
+    latestEventSeq: 0,
+    recoveryAt: 0,
     updatedAt: 0,
     workstations: []
   };
@@ -716,8 +719,10 @@
     if (!sceneSummaryEl || !sceneListEl) return;
     const machine = String(sceneState.machineState || 'idle');
     const reason = String(sceneState.reason || 'n/a');
+    const transition = String(sceneState.transition || 'n/a');
+    const latestSeq = Number.isFinite(Number(sceneState.latestEventSeq)) ? Number(sceneState.latestEventSeq) : 0;
     const stations = Array.isArray(sceneState.workstations) ? sceneState.workstations : [];
-    sceneSummaryEl.textContent = `machine=${machine} · reason=${reason} · stations=${stations.length}`;
+    sceneSummaryEl.textContent = `machine=${machine} · reason=${reason} · transition=${transition} · seq=${latestSeq} · stations=${stations.length}`;
 
     sceneListEl.innerHTML = '';
     if (!stations.length) {
@@ -2579,6 +2584,9 @@
       case 'sceneState':
         sceneState.machineState = String(msg.machineState || 'idle');
         sceneState.reason = String(msg.reason || 'n/a');
+        sceneState.transition = String(msg.transition || 'n/a');
+        sceneState.latestEventSeq = Number.isFinite(Number(msg.latestEventSeq)) ? Number(msg.latestEventSeq) : 0;
+        sceneState.recoveryAt = Number.isFinite(Number(msg.recoveryAt)) ? Number(msg.recoveryAt) : 0;
         sceneState.updatedAt = Number.isFinite(Number(msg.updatedAt)) ? Number(msg.updatedAt) : Date.now();
         sceneState.workstations = Array.isArray(msg.workstations) ? msg.workstations : [];
         renderSceneStatePanel();

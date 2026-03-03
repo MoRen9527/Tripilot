@@ -427,6 +427,9 @@ type WebviewOutboundMessageExtended =
 				type: 'sceneState';
 				machineState: 'idle' | 'working' | 'waiting' | 'failed';
 				reason?: string;
+				transition?: string;
+				latestEventSeq?: number;
+				recoveryAt?: number;
 				updatedAt: number;
 				workstations: Array<{
 					id: string;
@@ -530,6 +533,9 @@ type ChatHostState = {
 	sceneState?: {
 		machineState: 'idle' | 'working' | 'waiting' | 'failed';
 		reason?: string;
+		transition?: string;
+		latestEventSeq?: number;
+		recoveryAt?: number;
 		updatedAt: number;
 		workstations: Array<{
 			id: string;
@@ -5674,6 +5680,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		const hasWaitingApproval =
 			!!this.pendingEditApproval &&
 			(this.pendingEditApproval.originHost === state.kind || this.pendingEditApproval.originHost === 'sidebar');
+		const prevScene = state.sceneState;
 		const prevStations = new Map((state.sceneState?.workstations ?? []).map((s) => [String(s.id), s]));
 
 		let machineState: 'idle' | 'working' | 'waiting' | 'failed' = 'idle';
@@ -5761,10 +5768,25 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			idle: 3
 		};
 		workstations.sort((a, b) => stateRank[a.state] - stateRank[b.state] || a.label.localeCompare(b.label));
+		const latestEventSeq = (() => {
+			let maxSeq: number | undefined;
+			for (const ws of workstations) {
+				const seq = ws.eventSeq;
+				if (!Number.isFinite(Number(seq))) continue;
+				const n = Math.max(0, Math.floor(Number(seq)));
+				if (maxSeq == null || n > maxSeq) maxSeq = n;
+			}
+			return maxSeq;
+		})();
+		const transition = `${String(prevScene?.machineState ?? 'init')}->${machineState}`;
+		const recoveryAt = recoveredCount > 0 ? Date.now() : prevScene?.recoveryAt;
 
 		const next = {
 			machineState,
 			reason,
+			transition,
+			latestEventSeq,
+			recoveryAt,
 			updatedAt: Date.now(),
 			workstations
 		};
