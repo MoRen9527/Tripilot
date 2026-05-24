@@ -3,3 +3,5 @@ out/
 coverage/
 tests/fixtures/generated/
 *.vsix
+node_modules
+.vscode-test/
