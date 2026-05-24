@@ -1,9 +1,9 @@
 {
   "folders": [
     { "path": "." },
-    { "path": "../opentride" },
+    { "path": "../Tride" },
     { "path": "../Tristaciss" },
-    { "path": "reference/vscodium/vscodium" }
+    { "path": "../vscodium" }
   ],
   "settings": {
     "files.watcherExclude": {

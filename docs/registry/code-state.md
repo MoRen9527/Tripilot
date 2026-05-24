@@ -22,7 +22,7 @@
 
 ## Git Health
 
-- 目前未在 registry 中建立分支或变更统计基线。
+- 2026-05-24 已由 CTO 小狄技术线继续清理仓库噪音：历史 `reference/` vendored 对照源码已从 Tripilot 仓库移出；需要对照上游时回到独立参考仓库或中央 reference 链路，不再把大体量 reference 作为 Tripilot 代码事实。
 
 ## Local CodeGraph Index
 

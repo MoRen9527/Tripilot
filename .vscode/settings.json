@@ -19,7 +19,7 @@
 		"Test-Path": true,
 		"git clone": true,
 		"Test-NetConnection": true,
-		"/^Set-Location \"d:\\\\OneDrive\\\\Code\\\\ai\\\\opentride\"; node -e \"const fs=require\\('fs'\\); const path=require\\('path'\\); const root='packages/protocol/schemas/v1'; const files=\\[\\]; \\(function walk\\(p\\)\\{ for\\(const ent of fs\\.readdirSync\\(p,\\{withFileTypes:true\\}\\)\\) \\{ const fp=path\\.join\\(p,ent\\.name\\); if\\(ent\\.isDirectory\\(\\)\\) walk\\(fp\\); else if\\(ent\\.isFile\\(\\) && ent\\.name\\.endsWith\\('\\.json'\\)\\) files\\.push\\(fp\\);\\} \\}\\)\\(root\\); console\\.log\\('schemas',files\\.length\\); for\\(const f of files\\)\\{ try\\{ JSON\\.parse\\(fs\\.readFileSync\\(f,'utf8'\\)\\); \\} catch\\(e\\)\\{ console\\.error\\('invalid json',f,e\\.message\\); process\\.exit\\(1\\);\\} \\} console\\.log\\('all json parse ok'\\);\"$/": {
+		"/^Set-Location \"d:\\\\OneDrive\\\\Code\\\\ai\\\\Tride\"; node -e \"const fs=require\\('fs'\\); const path=require\\('path'\\); const root='packages/protocol/schemas/v1'; const files=\\[\\]; \\(function walk\\(p\\)\\{ for\\(const ent of fs\\.readdirSync\\(p,\\{withFileTypes:true\\}\\)\\) \\{ const fp=path\\.join\\(p,ent\\.name\\); if\\(ent\\.isDirectory\\(\\)\\) walk\\(fp\\); else if\\(ent\\.isFile\\(\\) && ent\\.name\\.endsWith\\('\\.json'\\)\\) files\\.push\\(fp\\);\\} \\}\\)\\(root\\); console\\.log\\('schemas',files\\.length\\); for\\(const f of files\\)\\{ try\\{ JSON\\.parse\\(fs\\.readFileSync\\(f,'utf8'\\)\\); \\} catch\\(e\\)\\{ console\\.error\\('invalid json',f,e\\.message\\); process\\.exit\\(1\\);\\} \\} console\\.log\\('all json parse ok'\\);\"$/": {
 			"approve": true,
 			"matchCommandLine": true
 		},
@@ -28,7 +28,7 @@
 			"approve": true,
 			"matchCommandLine": true
 		},
-		"/^node \"d:\\\\OneDrive\\\\Code\\\\ai\\\\opentride\\\\packages\\\\runtime\\\\src\\\\cli\\.js\" --port 4317$/": {
+		"/^node \"d:\\\\OneDrive\\\\Code\\\\ai\\\\Tride\\\\packages\\\\runtime\\\\src\\\\cli\\.js\" --port 4317$/": {
 			"approve": true,
 			"matchCommandLine": true
 		},
@@ -42,23 +42,6 @@
 		"ok:true": true,
 		"console.log('ADDR',addr)": true,
 		"setInterval(()=>{},1000000)": true
-	},
-	// 这些 reference/ 目录只是用于对照源码，不需要 TS Server 建项目；
-	// 否则会因为未安装依赖而出现大量 "找不到类型定义" 的 Problems。
-	"typescript.tsserver.exclude": [
-		"reference/vscode-copilot-chat/**",
-		"reference/copilot-api-tmp/**",
-		"reference/vscodium/**"
-	],
-	"javascript.tsserver.exclude": [
-		"reference/vscode-copilot-chat/**",
-		"reference/copilot-api-tmp/**",
-		"reference/vscodium/**"
-	],
-	// reference/vscode-copilot-chat 是用于对照的上游扩展源码；它的 package.json 会触发内置的扩展清单校验（extension-editing）并产生错误。
-	// 在本仓库开发 Tripilot 时，把它当作纯文本即可避免这些噪声诊断。
-	"files.associations": {
-		"reference/vscode-copilot-chat/package.json": "plaintext"
 	},
 	"vitest.enable": true,
 	"vitest.commandLine": "npm run test:watch",
