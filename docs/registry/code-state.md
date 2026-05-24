@@ -27,9 +27,10 @@
 ## Local CodeGraph Index
 
 - 2026-05-24 已建立本地 CodeGraph 源码索引，由 `TripilotCodeRegistry` 接管摘要与后续维护纪律。
-- 当前索引拆为 `src/` 与 `tests/` 两个干净索引：`src/` 为 10 files，488 nodes，1,917 edges，语言覆盖 `typescript`；`tests/` 为 6 files，27 nodes，32 edges，语言覆盖 `javascript`、`typescript`；backend 均为 `node-sqlite`。
+- 2026-05-24 仓库瘦身完成后已重建仓根干净索引；旧 `src/` / `tests/` 分区索引不再作为正式摘要。
+- 当前仓根摘要：23 files，545 nodes，2,000 edges；languages `javascript, typescript, yaml`；backend 为 `node-sqlite`。
 - 2026-05-24 已由 CTO 小狄技术线执行仓库瘦身：`node_modules/` 与 `out/` 已从 Git 索引移出，本地依赖与编译输出保留；`.vscode-test/` 作为本地扩展测试运行产物忽略。
-- Tripilot 仓库历史上存在已跟踪的 `node_modules/`，因此本轮仍不使用旧仓根 CodeGraph 索引作为 registry 事实，避免把依赖包误登记为模块代码事实；后续可在瘦身提交后按需重建仓根索引。
+- Tripilot 仓库历史上存在已跟踪的 `node_modules/`，本轮已通过瘦身与重建索引消除该污染前提；后续以仓根干净索引为 CodeRegistry 的本地辅助索引。
 - `.codegraph/` 仅作为本地缓存与辅助索引，不作为仓库真源提交；后续只在本文件记录扫描摘要、版本锚点、排除规则、入口与调用链发现、待确认缺口。
 - 首轮版本锚点：以本次本地扫描时工作区状态为准；后续正式收口时应补充对应 git commit / branch。
 
