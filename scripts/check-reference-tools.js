@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 // Copilot built-in-tools alignment check.
-// Expected tool names are derived from reference/copilot/built-in-tools folder structure:
+// Expected tool names are derived from the optional reference/copilot/built-in-tools folder structure:
 // - agent/edit/execute/read/search/vscode/web: tool name == markdown filename (without .md), excluding overview/readme
 // - todo: category page; Tripilot aligns via manage_todo_list
 // We then compare against:
@@ -89,8 +89,8 @@ function extractDefaultEnabledToolNames(pkgJsonText) {
 
 function main() {
 	if (!fs.existsSync(REF_DIR)) {
-		console.error(`Reference dir not found: ${REF_DIR}`);
-		process.exit(2);
+		console.warn(`Reference dir not found, skipping Copilot built-in tool alignment check: ${REF_DIR}`);
+		return;
 	}
 	const expected = extractExpectedToolNamesFromReference();
 
