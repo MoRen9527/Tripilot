@@ -1296,6 +1296,30 @@ export function activate(context: vscode.ExtensionContext) {
 			await provider.selectAndLoadChatSessionInteractive();
 		})
 	);
+
+	// ── TriLC auto-start (desktop daemon) ──
+	void (async () => {
+		try {
+			const cfg = vscode.workspace.getConfiguration('tripilot');
+			const autoStart = cfg.get<boolean>('triLC.autoStart', true);
+			if (!autoStart) return;
+
+			const port = cfg.get<number>('triLC.port', 8711);
+			const trilcCmd = process.env.TRILC_BIN || 'trilc';
+
+			const child = spawn(trilcCmd, ['start', '--port', String(port)], {
+				detached: true,
+				stdio: 'ignore',
+				shell: process.platform === 'win32'
+			});
+			triLCPid = child.pid ?? undefined;
+			child.unref();
+
+			debugChannel.appendLine(`[TriLC] auto-started on port ${port} (PID ${triLCPid ?? '?'})`);
+		} catch (e) {
+			debugChannel.appendLine(`[TriLC] auto-start failed: ${e instanceof Error ? e.message : String(e)}`);
+		}
+	})();
 }
 
 function safeToString(value: unknown): string {
@@ -1593,8 +1617,19 @@ function invalidateWorkspaceCustomAgentsCache(): void {
 	workspaceCustomAgentsCache = undefined;
 }
 
+let triLCPid: number | undefined;
+
 export function deactivate() {
-	// no-op
+	// TriLC cleanup: attempt to stop the auto-started daemon
+	if (triLCPid !== undefined) {
+		try {
+			const { execFile } = require('node:child_process');
+			const trilcCmd = process.env.TRILC_BIN || 'trilc';
+			execFile(trilcCmd, ['stop'], { timeout: 5000, windowsHide: true }, () => {});
+		} catch {
+			// best-effort
+		}
+	}
 }
 
 function readMcpServersFromConfig(): McpServerConfig[] {

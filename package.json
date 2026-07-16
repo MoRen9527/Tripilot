@@ -258,6 +258,18 @@
           "default": false,
           "description": "Log Settings load timings to the 'Tripilot Settings Perf' output channel."
         },
+        "tripilot.triLC.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "When true, TriPilot automatically starts the TriLC local daemon (trilc start) on activation."
+        },
+        "tripilot.triLC.port": {
+          "type": "number",
+          "default": 8711,
+          "minimum": 1024,
+          "maximum": 65535,
+          "description": "Port for the TriLC local daemon HTTP server."
+        },
         "tripilot.askStudySandboxDir": {
           "type": "string",
           "default": ".tripilot/ask-study",
@@ -395,41 +407,41 @@
           "default": [],
           "description": "Custom agent ids hidden from Tripilot's agents dropdown (similar to VS Code Copilot Chat Configure Custom Agents → eye icon)."
         },
-    "tripilot.edits.approvalMode": {
-      "type": "string",
-      "enum": [
-        "post",
-        "pre"
-      ],
-      "default": "post",
-      "description": "Edits approval strategy. post = apply changes first, then offer Keep/Undo in chat (Copilot-like). pre = require Apply/Cancel approval before writing to disk. ask&study always requires pre-approval."
-    },
-    "tripilot.edits.sensitiveGlobs": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "default": [
-        "**/.env",
-        "**/.env.*",
-        "**/.git/**",
-        "**/.ssh/**",
-        "**/id_rsa",
-        "**/id_ed25519",
-        "**/*.pem",
-        "**/*.p12",
-        "**/*.pfx",
-        "**/*secret*",
-        "**/*token*",
-        "**/*key*"
-      ],
-      "description": "Workspace-relative glob patterns treated as sensitive; edits to these files require pre-approval even when approvalMode=post."
-    },
-    "tripilot.edits.enableHealing": {
-      "type": "boolean",
-      "default": false,
-      "description": "Enable conservative edit parameter healing for replace-string edits. When an edit oldString is not found, Tripilot may retry once using the closest unique similar snippet as oldString. ask&study always enables healing regardless of this setting."
-    },
+        "tripilot.edits.approvalMode": {
+          "type": "string",
+          "enum": [
+            "post",
+            "pre"
+          ],
+          "default": "post",
+          "description": "Edits approval strategy. post = apply changes first, then offer Keep/Undo in chat (Copilot-like). pre = require Apply/Cancel approval before writing to disk. ask&study always requires pre-approval."
+        },
+        "tripilot.edits.sensitiveGlobs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/.env",
+            "**/.env.*",
+            "**/.git/**",
+            "**/.ssh/**",
+            "**/id_rsa",
+            "**/id_ed25519",
+            "**/*.pem",
+            "**/*.p12",
+            "**/*.pfx",
+            "**/*secret*",
+            "**/*token*",
+            "**/*key*"
+          ],
+          "description": "Workspace-relative glob patterns treated as sensitive; edits to these files require pre-approval even when approvalMode=post."
+        },
+        "tripilot.edits.enableHealing": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable conservative edit parameter healing for replace-string edits. When an edit oldString is not found, Tripilot may retry once using the closest unique similar snippet as oldString. ask&study always enables healing regardless of this setting."
+        },
         "tripilot.mcpServers": {
           "type": "array",
           "default": [],
@@ -515,20 +527,22 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "@trimetaverse/tricode": "file:../TriCode",
     "@vscode/codicons": "^0.0.36",
-	"diff": "^8.0.2",
+    "diff": "^8.0.2",
     "sql.js": "^1.13.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@types/diff": "^5.2.0",
     "@types/node": "^20.11.30",
-	"@types/diff": "^5.2.0",
     "@types/vscode": "^1.96.0",
-    "typescript": "^5.5.4",
-    "vitest": "^3.2.4",
     "@vitest/coverage-v8": "^3.2.4",
     "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.9.2",
+    "glob": "^11.0.3",
     "mocha": "^10.8.2",
-    "glob": "^11.0.3"
+    "typescript": "^5.5.4",
+    "vitest": "^3.2.4"
   }
 }
