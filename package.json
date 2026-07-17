@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "tripilot-chat",
   "displayName": "Tripilot Chat",
   "description": "A Copilot Chat-like sidebar with tool calling via VS Code APIs.",
@@ -31,8 +31,18 @@
   ],
   "main": "./out/extension.js",
   "bin": {
-    "tripilot": "./out/cli/tripilot-cli.js"
+    "tripilot": "./bin/tripilot"
   },
+  "files": [
+    "bin/",
+    "dist/",
+    "out/",
+    "src/",
+    "resources/",
+    "package.json",
+    "tsconfig.json",
+    "README.md"
+  ],
   "contributes": {
     "commands": [
       {
@@ -440,6 +450,8 @@
   },
   "scripts": {
     "compile": "npm run check:reference-tools && npm run check:tool-impl && tsc -p .",
+    "build:cli": "npx tsx script/build-cli.ts",
+    "prepack": "npm run compile && npm run build:cli",
     "watch": "npm run check:reference-tools && npm run check:tool-impl && tsc -watch -p .",
     "test": "npm run test:unit && npm run test:integration",
     "test:unit": "vitest run tests/unit --coverage",
@@ -470,6 +482,7 @@
     "@vscode/vsce": "^3.9.2",
     "glob": "^11.0.3",
     "mocha": "^10.8.2",
+    "tsx": "^4.23.1",
     "typescript": "^5.5.4",
     "vitest": "^3.2.4"
   }

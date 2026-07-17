@@ -9537,7 +9537,7 @@ async function executeToolCall(name: string, input: unknown, runtime?: ToolRunti
 			await ensureSandboxDir();
 			// Be tolerant: some models may send {patch:...} / {diff:...} or even non-JSON raw args.
 			const patchRaw = (() => {
-				// If JSON parsing failed upstream (models-direct/copilot-direct), we keep the raw args.
+				// If JSON parsing failed upstream (trilc-direct), we keep the raw args.
 				if (parsed && typeof parsed === 'object' && (parsed as any)._parseError && typeof (parsed as any).raw === 'string') {
 					return String((parsed as any).raw ?? '');
 				}

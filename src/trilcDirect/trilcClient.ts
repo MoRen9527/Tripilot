@@ -28,7 +28,7 @@ export interface TrilcModelInfo {
   multiplier?: number;
 }
 
-/** OpenAI-compatible chat message type (shared with old copilot-direct code). */
+/** OpenAI-compatible chat message type. */
 export type OpenAIChatMessage =
   | { role: 'system'; content: string }
   | { role: 'user'; content: string }
@@ -69,7 +69,7 @@ export type OpenAIChatCompletionsChunk = {
   }>;
 };
 
-/** Auto-models session (replaces CopilotAutoModelsSession). */
+/** Auto-models session for TriLC. */
 export interface TrilcAutoModelsSession {
   sessionToken: string;
   expiresAt?: number;
@@ -159,7 +159,7 @@ export class TrilcDirectClient {
     private readonly editorVersion: string,
   ) {}
 
-  /** @deprecated Stub — TriLC does not use GitHub copilot tokens. */
+  /** @deprecated Stub — TriLC does not use GitHub tokens. */
   async getCopilotToken(): Promise<null> {
     return null;
   }

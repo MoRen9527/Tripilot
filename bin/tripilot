@@ -1,0 +1,59 @@
+#!/usr/bin/env node
+/**
+ * ── Tripilot CLI Launcher ──
+ * Modeled after Claude Code / opencode bin/opencode.
+ *
+ * Resolution order:
+ * 1. TRIPILOT_BIN_PATH env var
+ * 2. Bundled CLI in <package>/dist/tripilot-cli-bundle.js
+ * 3. Compiled CLI in <package>/out/cli/tripilot-cli.js (tsc output)
+ */
+"use strict";
+
+const childProcess = require("child_process");
+const fs = require("fs");
+const path = require("path");
+
+function run(target) {
+  const result = childProcess.spawnSync(process.execPath, [target, ...process.argv.slice(2)], {
+    stdio: "inherit",
+  });
+  if (result.error) {
+    console.error("tripilot:", result.error.message);
+    process.exit(1);
+  }
+  const code = typeof result.status === "number" ? result.status : 0;
+  process.exit(code);
+}
+
+// 1. Explicit bin path override
+const envPath = process.env.TRIPILOT_BIN_PATH;
+if (envPath) {
+  if (fs.existsSync(envPath)) {
+    run(envPath);
+  } else {
+    console.error("tripilot: TRIPILOT_BIN_PATH set but file not found:", envPath);
+    process.exit(1);
+  }
+}
+
+// 2. Resolve from this script's location
+const scriptPath = fs.realpathSync(__filename);
+const scriptDir = path.dirname(scriptPath);
+
+// Try bundled CLI first
+const bundled = path.join(scriptDir, "..", "dist", "tripilot-cli-bundle.js");
+if (fs.existsSync(bundled)) {
+  run(bundled);
+}
+
+// Fallback to tsc-compiled CLI
+const compiled = path.join(scriptDir, "..", "out", "cli", "tripilot-cli.js");
+if (fs.existsSync(compiled)) {
+  run(compiled);
+}
+
+console.error("tripilot: Could not find CLI entry point. Expected:");
+console.error("  " + bundled);
+console.error("  " + compiled);
+process.exit(1);
