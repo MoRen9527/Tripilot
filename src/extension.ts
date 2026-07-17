@@ -7,7 +7,7 @@ import * as https from 'node:https';
 import * as http from 'node:http';
 import { McpClientManager, makeMcpLmToolName, type McpServerConfig, type McpServerStatus } from './mcpClient';
 import { JsonlChatHistoryStore, type ChatHistoryEvent } from './chatHistory';
-import { TrilcDirectClient, type TrilcClientConfig, type TrilcModelInfo, type TrilcMessage, type TrilcTool, type OpenAIChatMessage, type TrilcAutoModelsSession } from './trilcDirect/trilcClient';
+import { TrilcDirectClient, type TrilcClientConfig, type TrilcModelInfo, type TrilcMessage, type TrilcTool, type TrilcContentBlock, type OpenAIChatMessage, type TrilcAutoModelsSession } from './trilcDirect/trilcClient';
 import { applyPatch as applyUnifiedPatch, diffLines, parsePatch } from 'diff';
 
 type WebviewInboundMessage =
@@ -5840,6 +5840,47 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 	}
 
 
+	private convertTrilcConversationToMessages(
+		conversation: OpenAIChatMessage[],
+	): TrilcMessage[] {
+		const messages: TrilcMessage[] = [];
+		for (const m of conversation) {
+			if (m.role === 'tool') {
+				// Tool result: wrap as user message with tool_result content block
+				messages.push({
+					role: 'user',
+					content: [{
+						type: 'tool_result',
+						tool_use_id: m.tool_call_id,
+						content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+					}],
+				});
+			} else if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0) {
+				// Assistant with tool calls: convert to content blocks
+				const blocks: TrilcContentBlock[] = [];
+				if (m.content && typeof m.content === 'string' && m.content.trim()) {
+					blocks.push({ type: 'text', text: m.content });
+				}
+				for (const tc of m.tool_calls) {
+					blocks.push({
+						type: 'tool_use',
+						id: tc.id,
+						name: tc.function.name,
+						input: (() => { try { return JSON.parse(tc.function.arguments); } catch { return {}; } })(),
+					});
+				}
+				messages.push({ role: 'assistant', content: blocks });
+			} else {
+				// Plain user/assistant text message
+				messages.push({
+					role: (m.role === 'assistant' ? 'assistant' : 'user') as 'user' | 'assistant',
+					content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+				});
+			}
+		}
+		return messages;
+	}
+
 	private async runTrilcDirectRequest(
 		state: ChatHostState,
 		args: {
@@ -5862,13 +5903,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		state.trilcConversation ??= [];
 		this.ensureTrilcSystemInstructionUpToDate(state);
 
-		// Convert OpenAI-format conversation to Anthropic TrilcMessage format
-		const messages: TrilcMessage[] = state.trilcConversation.map((m) => ({
-			role: (m.role === 'assistant' ? 'assistant' : 'user') as 'user' | 'assistant',
-			content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
-		}));
-
-		// Convert tool definitions to TrilcTool format
+		// Convert tool definitions to TrilcTool format (stable across iterations)
 		const trilcTools: TrilcTool[] = built.toolDefinitions
 			.filter((t) => built.enabledTools.has(t.function.name))
 			.map((t) => ({
@@ -5877,53 +5912,127 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 				input_schema: (t.function.parameters ?? {}) as Record<string, unknown>,
 			}));
 
-		let didStreamAssistant = false;
-		let streamedText = '';
+		const maxIterations: number = vscode.workspace.getConfiguration('tripilot').get<number>('maxToolIterations', 6);
+		let iteration = 0;
 
-		const { content: finalText, toolCalls } = await this.trilcClient.streamChat({
-			cfg: { baseUrl: cfg.baseUrl, apiKey: cfg.apiKey },
-			model: args.modelId,
-			system: state.trilcSystemInstruction,
-			messages,
-			tools: trilcTools.length ? trilcTools : undefined,
-			abortSignal: state.abortController!.signal,
-			onEvent: (event) => {
-				if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta.text) {
-					if (!didStreamAssistant) {
-						didStreamAssistant = true;
-						state.inProgressAssistantText = '';
-						this.postToHost(state, { type: 'chatAssistantStart', initialText: '' });
+		while (iteration < maxIterations) {
+			// Check abort before each API call
+			if (state.abortController!.signal.aborted) break;
+
+			const messages = this.convertTrilcConversationToMessages(state.trilcConversation);
+
+			let didStreamAssistant = false;
+			let streamedText = '';
+
+			const { content: finalText, toolCalls } = await this.trilcClient.streamChat({
+				cfg: { baseUrl: cfg.baseUrl, apiKey: cfg.apiKey },
+				model: args.modelId,
+				system: state.trilcSystemInstruction,
+				messages,
+				tools: trilcTools.length ? trilcTools : undefined,
+				abortSignal: state.abortController!.signal,
+				onEvent: (event) => {
+					if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta.text) {
+						if (!didStreamAssistant) {
+							didStreamAssistant = true;
+							state.inProgressAssistantText = '';
+							this.postToHost(state, { type: 'chatAssistantStart', initialText: '' });
+						}
+						state.inProgressAssistantText = (state.inProgressAssistantText ?? '') + event.delta.text;
+						streamedText += event.delta.text;
+						this.postToHost(state, { type: 'chatAssistantDelta', delta: event.delta.text });
 					}
-					state.inProgressAssistantText = (state.inProgressAssistantText ?? '') + event.delta.text;
-					streamedText += event.delta.text;
-					this.postToHost(state, { type: 'chatAssistantDelta', delta: event.delta.text });
-				} else if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
-					const name = event.content_block.name ?? 'unknown';
-					this.postToHost(state, {
-						type: 'chatToolInvocationBegin',
-						invocationId: event.content_block.id ?? '',
-						toolName: name,
-						inputPreview: '',
-					});
-				} else if (event.type === 'content_block_stop' && event.index !== undefined) {
-					// Block complete — nothing extra to post here
+				},
+			});
+
+			if (didStreamAssistant) {
+				this.postToHost(state, { type: 'chatAssistantEnd' });
+				state.inProgressAssistantText = undefined;
+			}
+
+			// No tool calls → final response, display and break
+			if (!toolCalls || toolCalls.length === 0) {
+				const displayText = streamedText || finalText || '';
+				if (!didStreamAssistant && displayText) {
+					this.postToHost(state, { type: 'chatAppend', role: 'assistant', text: displayText });
 				}
-			},
-		});
+				state.transcript.push({ role: 'assistant', text: displayText });
+				await this.appendHistory(state, {
+					kind: 'assistant_message',
+					text: displayText,
+					profileId: this.selectedAgentProfileId,
+					modelId: this.selectedModelId,
+				});
+				this.appendCheckpoint(state);
+				return;
+			}
 
-		if (didStreamAssistant) {
-			this.postToHost(state, { type: 'chatAssistantEnd' });
-			state.inProgressAssistantText = undefined;
+			// Tool calls received → execute them
+			this.setAndPostStatus(state, 'running-tools');
+
+			// Append assistant message with tool_calls to conversation
+			state.trilcConversation.push({
+				role: 'assistant',
+				content: streamedText || finalText || undefined,
+				tool_calls: toolCalls,
+			});
+
+			for (const tc of toolCalls) {
+				const toolName = tc.function.name || 'unknown';
+				const toolInput = tc.function.arguments || '{}';
+				const invocationId = tc.id || `call_${crypto.randomUUID()}`;
+
+				this.postToHost(state, {
+					type: 'chatToolInvocationBegin',
+					invocationId,
+					toolName,
+					inputPreview: toolInput.slice(0, 200),
+				});
+
+				const t0 = Date.now();
+				let result: string;
+				try {
+					result = await executeToolCall(toolName, toolInput, {
+						abortSignal: state.abortController!.signal,
+						mcpManager: this.mcpManager,
+						policy: this.selectedAgentProfileId ? {
+							agentProfileId: this.selectedAgentProfileId,
+							askStudySandboxDir: String(vscode.workspace.getConfiguration('tripilot').get<string>('askStudySandboxDir', '.tripilot/ask-study')),
+						} : undefined,
+					});
+				} catch (e) {
+					result = `Error: ${e instanceof Error ? e.message : String(e)}`;
+				}
+				const durationMs = Date.now() - t0;
+
+				this.postToHost(state, {
+					type: 'chatToolInvocationEnd',
+					invocationId,
+					toolName,
+					ok: !result.startsWith('Error:'),
+					outputPreview: result.slice(0, 200),
+					outputFull: result,
+					durationMs,
+				});
+
+				// Append tool result to conversation
+				state.trilcConversation.push({
+					role: 'tool',
+					content: result,
+					tool_call_id: tc.id,
+				});
+			}
+
+			iteration++;
 		}
 
-		const displayText = streamedText || finalText || '';
-		if (!didStreamAssistant && displayText) {
-			this.postToHost(state, { type: 'chatAppend', role: 'assistant', text: displayText });
-		}
-		state.transcript.push({ role: 'assistant', text: displayText });
+		// Max iterations reached without final text response
+		const exhaustedMsg = `[已达到最大工具调用次数 (${maxIterations})，请求终止。]`;
+		this.postToHost(state, { type: 'chatAppend', role: 'assistant', text: exhaustedMsg });
+		state.transcript.push({ role: 'assistant', text: exhaustedMsg });
 		await this.appendHistory(state, {
 			kind: 'assistant_message',
-			text: displayText,
+			text: exhaustedMsg,
 			profileId: this.selectedAgentProfileId,
 			modelId: this.selectedModelId,
 		});
