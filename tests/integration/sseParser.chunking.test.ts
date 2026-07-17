@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseSseStream, type SseDebugBuffer } from '../../src/copilotDirect/sseParser';
+import { parseSseStream, type SseDebugBuffer } from '../../src/trilcDirect/sseParser';
 
 function toChunkedStream(chunks: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();

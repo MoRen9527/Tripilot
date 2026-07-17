@@ -3,7 +3,7 @@
 ## Module Overview
 
 - `TriPilot` 是用户入口界面和工具级基础设施的一部分；当前物理仓库路径仍为 `Tripilot/`，在显式 repo rename 前继续作为兼容路径。
-- 它基于 VS Code 扩展与 webview 提供三元宇宙服务的桌面聊天入口，并属于 PC 端软件层中的本地控制和显示入口模块。
+- 提供**双入口**：VS Code 扩展 webview（chat 面板）+ CLI 命令行（`tripilot`），CLI 参数与功能对齐从 Claude Code 吸收的成熟能力。
 
 ## Current Product Scope
 
@@ -11,7 +11,7 @@
 - 作为 `TriPilot + Tride + vscodium + CLI` 组成的 PC 端软件层中的用户交互入口之一。
 - 作为用户直接使用本地自动化、PC 软件自动化与 `vibe coding` 的前台入口之一。
 - 与 `TriLC` 协同承接本地化任务在用户侧的触发、确认与交互展示。
-- 目标上通过 `TriMC` 与 `TriStaciss` 接通所有可用模型，并控制和调配龙虾 / Hermes / 其他 agents；即使部分 agent 在本地运行，也应由服务端主控保持任务连续性，降低 IDE 关闭导致会话中断的影响。
+- 默认通过 `TriLC` 直连本地 agent runtime 与 `TriStaciss` 模型端点；仅在 `TriLC` 崩溃/不可用时自动切换 `TriMC` 云端通道（配合 TWF-001 恢复机制）。
 - 产品定位上，TriPilot 只是与 `vscodium` 共同形成的本地工具和显示入口，不承担云端 agent 主控本身。
 - 不承担正式宿主适配或切换语义；正式宿主配置由 `TriHost` 负责。
 
@@ -26,7 +26,7 @@
 ## Bug And Gap State
 
 - 当前产品状态尚未沉淀为稳定的 registry 快照，仍较依赖 README 和代码结构。
-- “IDE 关闭不影响长期任务”的能力依赖 `TriMC` 服务端主控和 agent 任务续跑机制，不应写成当前扩展单体已完成能力。
+- “IDE 关闭不影响长期任务”的能力依赖 `TriLC` 本地 detached runtime（基于 OpenClaw daemon 守候进程模式），不应写成当前扩展单体已完成能力。
 - 与 `vscodium` 的宿主基础设施边界需要持续明确。
 - 与 `Tride` 的交互入口 / orchestration 边界需要持续显式维护。
 
@@ -64,7 +64,7 @@
 |------|------|
 | G1 | Electron 安装包可正常安装启动（Win/Mac/Linux） |
 | G2 | 启动后自动拉起 TriLC 本地服务（后台静默） |
-| G3 | 聊天界面连接成功（优先连 TriMC，断线自动切 TriLC） |
+| G3 | 聊天界面连接成功（优先连 TriLC，断线自动切 TriMC） |
 | G4 | 输入"帮我整理本周工作" → 消息发送成功，返回 agent 思考过程 |
 | G5 | 任务被 ChiefOfStaff 解析 → 路由到对应员工 agent |
 | G6 | 员工 agent 完成执行 → 结果展示在聊天窗口 |

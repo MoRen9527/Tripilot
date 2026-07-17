@@ -7,17 +7,23 @@ import * as https from 'node:https';
 import * as http from 'node:http';
 import { McpClientManager, makeMcpLmToolName, type McpServerConfig, type McpServerStatus } from './mcpClient';
 import { JsonlChatHistoryStore, type ChatHistoryEvent } from './chatHistory';
-import { CopilotTokenManager } from './copilotDirect/copilotTokenManager';
-import { CopilotDirectClient, type CopilotAutoModelsSession, type CopilotModelInfo } from './copilotDirect/copilotClient';
-import type { OpenAIChatMessage, OpenAITool, OpenAIToolCall } from './copilotDirect/types';
-import {
-	clearCopilotDirectDeviceFlowSessions,
-	getGitHubScopes,
-	getGitHubSession,
-	peekCopilotDirectDeviceFlowSession
-} from './copilotDirect/githubAuth';
-import { ModelsDirectClient, type ModelsDirectModelInfo } from './modelsDirect/modelsDirectClient';
+import { TrilcDirectClient, type TrilcClientConfig, type TrilcModelInfo, type TrilcMessage, type TrilcTool, type OpenAIChatMessage, type TrilcAutoModelsSession } from './trilcDirect/trilcClient';
 import { applyPatch as applyUnifiedPatch, diffLines, parsePatch } from 'diff';
+
+// ── Stubs for removed copilotDirect GitHub auth ──
+// TriLC Direct uses simple baseUrl + apiKey config; no GitHub OAuth needed.
+function getGitHubScopes(_mode?: string): string[] {
+	return ['read:user'];
+}
+async function getGitHubSession(_mode?: string, _opts?: any): Promise<{ accessToken: string; accountLabel?: string; source?: string }> {
+	throw new Error('GitHub auth not available — use TriLC Direct (tripilot.trilcDirect.baseUrl)');
+}
+async function clearCopilotDirectDeviceFlowSessions(_secrets?: any, _mode?: string): Promise<number> {
+	return 0;
+}
+async function peekCopilotDirectDeviceFlowSession(_secrets?: any, _mode?: string): Promise<{ accountLabel?: string; updatedAtMs?: number } | undefined> {
+	return undefined;
+}
 
 type WebviewInboundMessage =
 	| { type: 'webviewReady' }
@@ -128,9 +134,11 @@ function formatDiscountPercent(frac: number): string {
 	return String(Number(pct.toFixed(2)));
 }
 
-function computeDiscountRange(discountedCosts?: Record<string, number>): { low: number; high: number } | undefined {
+function computeDiscountRange(discountedCosts?: Record<string, number | { low: number; high: number }>): { low: number; high: number } | undefined {
 	if (!discountedCosts) return undefined;
-	const values = Object.values(discountedCosts).filter((v) => typeof v === 'number' && Number.isFinite(v));
+	const values = Object.values(discountedCosts)
+		.map((v) => (typeof v === 'number' ? v : (v?.low ?? v?.high)))
+		.filter((v) => typeof v === 'number' && Number.isFinite(v));
 	if (!values.length) return undefined;
 	let low = values[0];
 	let high = values[0];
@@ -327,16 +335,11 @@ type ModelsCacheEntry = { atMs: number; ttlMs: number; models: LmModelInfo[] };
 const SETTINGS_MODELS_CACHE_TTL_MS = 60_000;
 const settingsModelsCache = new Map<string, ModelsCacheEntry>();
 
-function makeSettingsModelsCacheKey(provider: 'vscode-lm' | 'copilot-direct' | 'models-direct'): string {
+function makeSettingsModelsCacheKey(provider: 'vscode-lm' | 'trilc-direct'): string {
 	const cfg = vscode.workspace.getConfiguration('tripilot');
-	if (provider === 'models-direct') {
-		const baseUrl = String(cfg.get<string>('modelsDirect.baseUrl', '') ?? '').trim();
-		const tagDefault = String(cfg.get<string>('modelsDirect.modelTagDefault', '') ?? '').trim();
-		return `models-direct:${baseUrl}|tagDefault=${tagDefault}`;
-	}
-	if (provider === 'copilot-direct') {
-		const authMode = String(cfg.get<string>('copilotDirect.authMode', 'minimal') ?? 'minimal');
-		return `copilot-direct:authMode=${authMode}`;
+	if (provider === 'trilc-direct') {
+		const baseUrl = String(cfg.get<string>('trilcDirect.baseUrl', '') ?? '').trim();
+		return `trilc-direct:${baseUrl}`;
 	}
 	return 'vscode-lm';
 }
@@ -377,7 +380,7 @@ type WebviewOutboundMessageExtended =
 				type: 'lmModels';
 				models: LmModelInfo[];
 				selectedModelId?: string;
-				provider?: 'vscode-lm' | 'copilot-direct' | 'models-direct';
+				provider?: 'vscode-lm' | 'trilc-direct';
 				runtimeCount?: number;
 				hostVisibleCount?: number;
 				hostVisibleSource?: 'vscdb.cachedLanguageModels' | 'heuristic' | 'none';
@@ -496,9 +499,11 @@ type ChatHostState = {
 	webview?: vscode.Webview;
 	conversation: vscode.LanguageModelChatMessage[];
 	// Copilot Direct mode uses OpenAI-like message objects.
-	copilotConversation?: OpenAIChatMessage[];
+	trilcConversation?: OpenAIChatMessage[];
 	// Stable per-host interaction id (best-effort parity with Copilot headers).
-	copilotInteractionId?: string;
+	trilcInteractionId?: string;
+	// System instruction for TriLC direct mode.
+	trilcSystemInstruction?: string;
 	// Auto mode uses a short-lived session token + a selected model.
 	copilotAutoSession?: {
 		sessionToken: string;
@@ -778,44 +783,25 @@ export function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
-	// Background prefetch: try to warm copilot-direct token and model list to speed first Settings open.
+	// Background prefetch: try to warm TriLC model list to speed first Settings open.
 	void (async () => {
 		try {
 			const cfg = vscode.workspace.getConfiguration('tripilot');
-			const chatProvider = String(cfg.get('chatProvider', 'vscode-lm')) as 'vscode-lm' | 'copilot-direct' | 'models-direct';
-			if (chatProvider !== 'copilot-direct') return;
-			const authMode = String(cfg.get('copilotDirect.authMode', 'minimal')) as any;
-			const scopes = getGitHubScopes(authMode === 'permissive' ? 'permissive' : 'minimal');
-			let hasSession = false;
-			try {
-				if (vscode.authentication && typeof vscode.authentication.getSession === 'function') {
-					const s = await vscode.authentication.getSession('github', scopes, { createIfNone: false });
-					hasSession = !!s;
-				}
-			} catch {
-				// ignore
-			}
-			let devicePeek = false;
-			try {
-				const peek = await peekCopilotDirectDeviceFlowSession(context.secrets, authMode);
-				devicePeek = !!peek;
-			} catch {
-				// ignore
-			}
-			if (!hasSession && !devicePeek) return;
-			// We have either a VS Code GitHub session or a cached device-flow session: warm token + models.
+			const chatProvider = String(cfg.get('chatProvider', 'trilc-direct')) as 'trilc-direct';
+			if (chatProvider !== 'trilc-direct') return;
 			if (isSettingsPerfEnabled()) settingsPerfLog('[settings] backgroundPrefetch start');
 			try {
-				const tokenManager = new CopilotTokenManager(extensionVersion, () => (authMode === 'permissive' ? 'permissive' : 'minimal'), context.secrets);
-				const client = new CopilotDirectClient(extensionVersion, editorVersionHeader);
-				const token = await tokenManager.getCopilotToken();
-				if (!token) return;
-				const models = await client.listModels(token);
+				const client = new TrilcDirectClient(extensionVersion, editorVersionHeader);
+				const trilcCfg: TrilcClientConfig = {
+					baseUrl: vscode.workspace.getConfiguration('tripilot.trilcDirect').get<string>('baseUrl') || 'http://127.0.0.1:11434',
+					apiKey: vscode.workspace.getConfiguration('tripilot.trilcDirect').get<string>('apiKey') || undefined,
+				};
+				const models = await client.listModels(trilcCfg);
 				const mapped: LmModelInfo[] = models.map((m) => ({
 					id: m.id,
 					name: m.displayName ?? m.id,
-					vendor: 'copilot',
-					family: 'copilot',
+					vendor: 'trilc',
+					family: 'trilc',
 					version: 'n/a',
 					maxInputTokens: m.maxInputTokens ?? 0
 				}));
@@ -823,12 +809,7 @@ export function activate(context: vscode.ExtensionContext) {
 					{ id: 'auto', name: 'Auto', vendor: 'tripilot', family: 'auto', version: 'auto', maxInputTokens: 0 },
 					...mapped
 				];
-				setSettingsModelsCache(makeSettingsModelsCacheKey('copilot-direct'), result);
-				try {
-					tokenManager.dispose();
-				} catch {
-					// ignore
-				}
+				setSettingsModelsCache(makeSettingsModelsCacheKey('trilc-direct'), result);
 				if (isSettingsPerfEnabled()) settingsPerfLog('[settings] backgroundPrefetch done');
 			} catch (e) {
 				if (isSettingsPerfEnabled()) settingsPerfLog(`[settings] backgroundPrefetch err ${e instanceof Error ? e.message : String(e)}`);
@@ -858,12 +839,12 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 			if (
 				e.affectsConfiguration('tripilot.chatProvider') ||
-				e.affectsConfiguration('tripilot.copilotDirect.authMode') ||
-				e.affectsConfiguration('tripilot.modelsDirect.baseUrl') ||
-				e.affectsConfiguration('tripilot.modelsDirect.defaultModel') ||
-				e.affectsConfiguration('tripilot.modelsDirect.modelTagDefault') ||
-				e.affectsConfiguration('tripilot.modelsDirect.modelTags') ||
-				e.affectsConfiguration('tripilot.modelsDirect.modelExtras')
+				e.affectsConfiguration('tripilot.trilcDirect.authMode') ||
+				e.affectsConfiguration('tripilot.trilcDirect.baseUrl') ||
+				e.affectsConfiguration('tripilot.trilcDirect.defaultModel') ||
+				e.affectsConfiguration('tripilot.trilcDirect.modelTagDefault') ||
+				e.affectsConfiguration('tripilot.trilcDirect.modelTags') ||
+				e.affectsConfiguration('tripilot.trilcDirect.modelExtras')
 			) {
 				clearSettingsModelsCache();
 			}
@@ -930,12 +911,12 @@ export function activate(context: vscode.ExtensionContext) {
 
 			const config = vscode.workspace.getConfiguration('tripilot');
 			const chatProvider = String(config.get('chatProvider', 'vscode-lm'));
-			const authMode = String(config.get('copilotDirect.authMode', 'minimal')) as any;
+			const authMode = String(config.get('trilcDirect.authMode', 'minimal')) as any;
 			const scopes = getGitHubScopes(authMode === 'permissive' ? 'permissive' : 'minimal');
 			copilotDirectChannel.appendLine(`vscode: ${vscode.version}`);
 			copilotDirectChannel.appendLine(`extensionVersion: ${extensionVersion}`);
 			copilotDirectChannel.appendLine(`tripilot.chatProvider: ${chatProvider}`);
-			copilotDirectChannel.appendLine(`tripilot.copilotDirect.authMode: ${authMode}`);
+			copilotDirectChannel.appendLine(`tripilot.trilcDirect.authMode: ${authMode}`);
 			copilotDirectChannel.appendLine(`githubScopes: ${scopes.join(' ')}`);
 
 			const redact = (t: string | undefined) => {
@@ -984,7 +965,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 			if (!ghAccessToken) {
 				copilotDirectChannel.appendLine('STOP: no GitHub session token available.');
-				copilotDirectChannel.appendLine('Tip: 若是 VSCodium/无 GitHub Provider，请配置 tripilot.copilotDirect.deviceFlow.clientId 后重试。');
+				copilotDirectChannel.appendLine('Tip: 若是 VSCodium/无 GitHub Provider，请配置 tripilot.trilcDirect.deviceFlow.clientId 后重试。');
 				return;
 			}
 			copilotDirectChannel.appendLine(`ghAccessToken: ${redact(ghAccessToken)}`);
@@ -1121,7 +1102,7 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 
 	context.subscriptions.push(
-		vscode.commands.registerCommand('tripilot.copilotDirect.signOut', async () => {
+		vscode.commands.registerCommand('tripilot.trilcDirect.signOut', async () => {
 			const confirm = await vscode.window.showWarningMessage(
 				'将清除 Tripilot 的 copilot-direct device-flow 登录信息（仅影响 Tripilot，不会退出 VS Code 全局 GitHub 账号）。\n下次使用 copilot-direct 将需要重新登录。',
 				{ modal: true },
@@ -1133,7 +1114,7 @@ export function activate(context: vscode.ExtensionContext) {
 		const deleted = await clearCopilotDirectDeviceFlowSessions(context.secrets);
 
 		try {
-			provider.resetCopilotDirectCaches();
+			provider.resetTrilcDirectCaches();
 		} catch {
 			// ignore
 		}
@@ -1869,9 +1850,7 @@ class TripilotSettingsPanel {
 	private initialPage: 'models' | 'tools' | 'customAgents' = 'models';
 	private activeAgentProfileId: string = getDefaultAgentProfileId();
 	private builtinToolCategoriesCache?: Record<string, string>;
-	private readonly copilotTokenManager: CopilotTokenManager;
-	private readonly copilotClient: CopilotDirectClient;
-	private readonly modelsDirectClient: ModelsDirectClient;
+	private readonly trilcClient: TrilcDirectClient;
 	private readonly openedAtMs = Date.now();
 	private perfSeq = 0;
 
@@ -1924,16 +1903,14 @@ class TripilotSettingsPanel {
 				// ignore
 			}
 		}
-		this.copilotTokenManager = new CopilotTokenManager(this.extensionVersion, () => this.getCopilotAuthMode(), this.context.secrets);
-		this.copilotClient = new CopilotDirectClient(this.extensionVersion, `vscode/${vscode.version}`);
-		this.modelsDirectClient = new ModelsDirectClient(this.extensionVersion, `vscode/${vscode.version}`);
+		this.trilcClient = new TrilcDirectClient(this.extensionVersion, `vscode/${vscode.version}`);
 
 		this.panel.onDidDispose(() => {
 			if (TripilotSettingsPanel.current === this) {
 				TripilotSettingsPanel.current = undefined;
 			}
 			try {
-				this.copilotTokenManager.dispose();
+				this.trilcClient.dispose();
 			} catch {
 				// ignore
 			}
@@ -1959,7 +1936,7 @@ class TripilotSettingsPanel {
 					if (confirm !== '继续') return;
 
 					await clearCopilotDirectDeviceFlowSessions(this.context.secrets, mode);
-					this.resetCopilotDirectCaches();
+					this.resetTrilcDirectCaches();
 					clearSettingsModelsCache();
 
 					try {
@@ -1986,7 +1963,7 @@ class TripilotSettingsPanel {
 					);
 					if (confirm !== 'Sign out') return;
 					await clearCopilotDirectDeviceFlowSessions(this.context.secrets);
-					this.resetCopilotDirectCaches();
+					this.resetTrilcDirectCaches();
 					clearSettingsModelsCache();
 					await this.refreshAndPost(false);
 					return;
@@ -2211,9 +2188,9 @@ class TripilotSettingsPanel {
 		this.postToolsSnapshotUpdate();
 	}
 
-	public resetCopilotDirectCaches(): void {
+	public resetTrilcDirectCaches(): void {
 		try {
-			this.copilotTokenManager.reset();
+			this.trilcClient.reset();
 		} catch {
 			// ignore
 		}
@@ -2221,7 +2198,7 @@ class TripilotSettingsPanel {
 
 	public static resetCopilotDirectCachesIfOpen(): void {
 		try {
-			TripilotSettingsPanel.current?.resetCopilotDirectCaches();
+			TripilotSettingsPanel.current?.resetTrilcDirectCaches();
 		} catch {
 			// ignore
 		}
@@ -2294,46 +2271,25 @@ class TripilotSettingsPanel {
 		}
 	}
 
-	private getChatProvider(): 'vscode-lm' | 'copilot-direct' | 'models-direct' {
-		const raw = String(vscode.workspace.getConfiguration('tripilot').get<string>('chatProvider', 'vscode-lm') ?? 'vscode-lm');
-		if (raw === 'copilot-direct') return 'copilot-direct';
-		if (raw === 'models-direct') return 'models-direct';
+	private getChatProvider(): 'vscode-lm' | 'trilc-direct' {
+		const raw = String(vscode.workspace.getConfiguration('tripilot').get<string>('chatProvider', 'trilc-direct') ?? 'trilc-direct');
+		if (raw === 'trilc-direct') return 'trilc-direct';
 		return 'vscode-lm';
 	}
 
-	private getModelsDirectConfig(): {
-		baseUrl: string;
-		apiKey?: string;
-		defaultModel?: string;
-		modelTagDefault?: string;
-		modelTags?: Record<string, string>;
-		modelExtras?: Record<string, any>;
-		extraFieldName?: string;
-	} {
+	private getTrilcConfig(): TrilcClientConfig {
 		const cfg = vscode.workspace.getConfiguration('tripilot');
-		const baseUrl = String(cfg.get<string>('modelsDirect.baseUrl', '') ?? '').trim();
-		const apiKey = String(cfg.get<string>('modelsDirect.apiKey', '') ?? '').trim();
-		const defaultModel = String(cfg.get<string>('modelsDirect.defaultModel', '') ?? '').trim();
-		const modelTagDefault = String(cfg.get<string>('modelsDirect.modelTagDefault', '') ?? '').trim();
-		const extraFieldName = String(cfg.get<string>('modelsDirect.extraFieldName', 'tripilot') ?? 'tripilot').trim();
-		const modelTagsRaw = cfg.get<any>('modelsDirect.modelTags', undefined);
-		const modelExtrasRaw = cfg.get<any>('modelsDirect.modelExtras', undefined);
-		const modelTags = modelTagsRaw && typeof modelTagsRaw === 'object' ? (modelTagsRaw as Record<string, string>) : undefined;
-		const modelExtras = modelExtrasRaw && typeof modelExtrasRaw === 'object' ? (modelExtrasRaw as Record<string, any>) : undefined;
+		const baseUrl = String(cfg.get<string>('trilcDirect.baseUrl', 'http://127.0.0.1:19840') ?? '').trim();
+		const apiKey = String(cfg.get<string>('trilcDirect.apiKey', '') ?? '').trim();
 		return {
 			baseUrl,
 			apiKey: apiKey || undefined,
-			defaultModel: defaultModel || undefined,
-			modelTagDefault: modelTagDefault || undefined,
-			modelTags,
-			modelExtras,
-			extraFieldName: extraFieldName || undefined
 		};
 	}
 
-	private getCopilotAuthMode(): 'minimal' | 'permissive' {
+	private getTrilcAuthMode(): 'minimal' | 'permissive' {
 		const raw = String(
-			vscode.workspace.getConfiguration('tripilot').get<string>('copilotDirect.authMode', 'minimal') ?? 'minimal'
+			vscode.workspace.getConfiguration('tripilot').get<string>('trilcDirect.authMode', 'minimal') ?? 'minimal'
 		);
 		return raw === 'permissive' ? 'permissive' : 'minimal';
 	}
@@ -2571,14 +2527,14 @@ class TripilotSettingsPanel {
 
 	private async getCopilotDirectAuthStatus(): Promise<CopilotDirectAuthStatus> {
 		const started = Date.now();
-		const authMode = this.getCopilotAuthMode();
+		const authMode = this.getTrilcAuthMode();
 		const scopes = getGitHubScopes(authMode);
 
 		const cfg = vscode.workspace.getConfiguration('tripilot');
-		const tokenUrlOverride = String(cfg.get<string>('copilotDirect.tokenUrl', '') ?? '').trim();
+		const tokenUrlOverride = String(cfg.get<string>('trilcDirect.tokenUrl', '') ?? '').trim();
 		const tokenUrlOverrideEnabled = !!tokenUrlOverride;
-		const deviceFlowEnabled = !!cfg.get<boolean>('copilotDirect.deviceFlow.enabled', true);
-		const deviceFlowClientId = String(cfg.get<string>('copilotDirect.deviceFlow.clientId', '') ?? '').trim();
+		const deviceFlowEnabled = !!cfg.get<boolean>('trilcDirect.deviceFlow.enabled', true);
+		const deviceFlowClientId = String(cfg.get<string>('trilcDirect.deviceFlow.clientId', '') ?? '').trim();
 		const deviceFlowClientIdConfigured = !!deviceFlowClientId;
 
 		let vscodeAuthAvailable = !!vscode.authentication && typeof vscode.authentication.getSession === 'function';
@@ -2955,60 +2911,22 @@ class TripilotSettingsPanel {
 			return cached;
 		}
 
-		if (provider === 'copilot-direct') {
-			try {
-				const tToken = Date.now();
-				const copilotToken = await this.copilotTokenManager.getCopilotToken();
-				if (isSettingsPerfEnabled()) {
-					settingsPerfLog(`[settings] getAllModelsForSettings copilotToken ${Date.now() - tToken}ms ${this.perfPrefix()}`);
-				}
-				const tList = Date.now();
-				const models = await this.copilotClient.listModels(copilotToken);
-				if (isSettingsPerfEnabled()) {
-					settingsPerfLog(
-						`[settings] getAllModelsForSettings copilot.listModels ${Date.now() - tList}ms count=${models.length} ${this.perfPrefix()}`
-					);
-				}
-				const mapped: LmModelInfo[] = models.map((m) => ({
-					id: m.id,
-					name: m.displayName ?? m.id,
-					vendor: 'copilot',
-					family: 'copilot',
-					version: 'n/a',
-					maxInputTokens: m.maxInputTokens ?? 0
-				}));
-				const result = [autoModel, ...mapped];
-				setSettingsModelsCache(cacheKey, result);
-				if (isSettingsPerfEnabled()) {
-					settingsPerfLog(`[settings] getAllModelsForSettings total ${Date.now() - started}ms ${this.perfPrefix()}`);
-				}
-				return result;
-			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
-				void vscode.window.showWarningMessage(`无法加载 Copilot 模型：${message}`);
-				if (isSettingsPerfEnabled()) {
-					settingsPerfLog(`[settings] getAllModelsForSettings copilot-direct err: ${message} ${this.perfPrefix()}`);
-				}
-				return [autoModel];
-			}
-		}
-
-		if (provider === 'models-direct') {
-			const cfg = this.getModelsDirectConfig();
+		if (provider === 'trilc-direct') {
+			const cfg = this.getTrilcConfig();
 			if (!cfg.baseUrl) return [autoModel];
 			try {
 				const tList = Date.now();
-				const models = await this.modelsDirectClient.listModels({ baseUrl: cfg.baseUrl, apiKey: cfg.apiKey });
+				const models = await this.trilcClient.listModels({ baseUrl: cfg.baseUrl, apiKey: cfg.apiKey });
 				if (isSettingsPerfEnabled()) {
 					settingsPerfLog(
-						`[settings] getAllModelsForSettings models-direct listModels ${Date.now() - tList}ms count=${models.length} ${this.perfPrefix()}`
+						`[settings] getAllModelsForSettings trilc-direct listModels ${Date.now() - tList}ms count=${models.length} ${this.perfPrefix()}`
 					);
 				}
 				const mapped: LmModelInfo[] = models.map((m) => ({
 					id: m.id,
 					name: m.displayName ?? m.id,
-					vendor: 'models-direct',
-					family: String(m.modelTag || 'models-direct'),
+					vendor: 'trilc-direct',
+					family: String(m.modelTag || 'trilc-direct'),
 					version: 'n/a',
 					maxInputTokens: m.maxInputTokens ?? 0
 				}));
@@ -3020,9 +2938,9 @@ class TripilotSettingsPanel {
 				return result;
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
-				void vscode.window.showWarningMessage(`无法加载 Models Direct 模型：${message}`);
+				void vscode.window.showWarningMessage(`无法加载 TriLC Direct 模型：${message}`);
 				if (isSettingsPerfEnabled()) {
-					settingsPerfLog(`[settings] getAllModelsForSettings models-direct err: ${message} ${this.perfPrefix()}`);
+					settingsPerfLog(`[settings] getAllModelsForSettings trilc-direct err: ${message} ${this.perfPrefix()}`);
 				}
 				return [autoModel];
 			}
@@ -3300,19 +3218,16 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 	private toggleWantsChat = true;
 	private readonly hostStates: Record<ChatHostKind, ChatHostState>;
 	private lastModels: vscode.LanguageModelChat[] = [];
-	private lastCopilotModels: CopilotModelInfo[] = [];
-	private lastCopilotAutoDiscount?: { label: string; expiresAtMs: number };
-	private copilotAutoPrefetchInFlight?: Promise<void>;
-	private lastModelsDirectModels: ModelsDirectModelInfo[] = [];
+	private lastTrilcModels: TrilcModelInfo[] = [];
+	private lastTrilcAutoDiscount?: { label: string; expiresAtMs: number };
+	private trilcAutoPrefetchInFlight?: Promise<void>;
 	private selectedModelId?: string;
 	private selectedAgentProfileId: string;
 	private enabledTools = new Set<string>();
 	private readonly mcpManager: McpClientManager;
 	private readonly extensionVersion: string;
 	private readonly editorVersionHeader: string;
-	private readonly copilotTokenManager: CopilotTokenManager;
-	private readonly copilotClient: CopilotDirectClient;
-	private readonly modelsDirectClient: ModelsDirectClient;
+	private readonly trilcClient: TrilcDirectClient;
 	private workspaceCustomAgentsLoaded = false;
 	private workspaceCustomAgents: WorkspaceCustomAgentInfo[] = [];
 	private workspaceCustomAgentById = new Map<string, WorkspaceCustomAgentInfo>();
@@ -3417,22 +3332,20 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		this.mcpManager = mcpManager;
 		this.extensionVersion = String(extensionVersion || '0.0.0');
 		this.editorVersionHeader = String(editorVersionHeader || `vscode/${vscode.version}`);
-		this.copilotClient = new CopilotDirectClient(this.extensionVersion, this.editorVersionHeader);
-		this.modelsDirectClient = new ModelsDirectClient(this.extensionVersion, this.editorVersionHeader);
-		this.copilotTokenManager = new CopilotTokenManager(this.extensionVersion, () => this.getCopilotAuthMode(), this.context.secrets);
+		this.trilcClient = new TrilcDirectClient(this.extensionVersion, this.editorVersionHeader);
 		this.selectedModelId = this.context.globalState.get<string>('tripilot.selectedModelId');
 		this.selectedAgentProfileId =
 			this.context.globalState.get<string>('tripilot.selectedAgentProfileId') ?? getDefaultAgentProfileId();
 		this.enabledTools = new Set(Array.from(OPTIONAL_TOOL_NAMES));
 		this.hostStates = {
-			sidebar: { kind: 'sidebar', conversation: [], copilotConversation: [], transcript: [], contextAttachments: [] },
-			editor: { kind: 'editor', conversation: [], copilotConversation: [], transcript: [], contextAttachments: [] }
+			sidebar: { kind: 'sidebar', conversation: [], trilcConversation: [], transcript: [], contextAttachments: [] },
+			editor: { kind: 'editor', conversation: [], trilcConversation: [], transcript: [], contextAttachments: [] }
 		};
 		// vscode.lm currently only supports User/Assistant roles; store our system instructions as a hidden User message.
 		this.ensureSystemInstructionUpToDate(this.hostStates.sidebar);
 		this.ensureSystemInstructionUpToDate(this.hostStates.editor);
-		this.ensureCopilotSystemInstructionUpToDate(this.hostStates.sidebar);
-		this.ensureCopilotSystemInstructionUpToDate(this.hostStates.editor);
+		this.ensureTrilcSystemInstructionUpToDate(this.hostStates.sidebar);
+		this.ensureTrilcSystemInstructionUpToDate(this.hostStates.editor);
 
 		// Keep workspace custom agents in sync with the filesystem and settings.
 		try {
@@ -3485,18 +3398,18 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		}, Math.max(0, delayMs));
 	}
 
-	public resetCopilotDirectCaches(): void {
+	public resetTrilcDirectCaches(): void {
 		try {
-			this.copilotTokenManager.reset();
+			this.trilcClient.reset();
 		} catch {
 			// ignore
 		}
-		this.lastCopilotModels = [];
-		this.lastCopilotAutoDiscount = undefined;
-		this.copilotAutoPrefetchInFlight = undefined;
+		this.lastTrilcModels = [];
+		this.lastTrilcAutoDiscount = undefined;
+		this.trilcAutoPrefetchInFlight = undefined;
 	}
 
-	private buildCopilotDirectLmModels(): { models: LmModelInfo[]; selectedModelId?: string } {
+	private buildTrilcDirectLmModels(): { models: LmModelInfo[]; selectedModelId?: string } {
 		const visibleModelIds = new Set(
 			(vscode.workspace.getConfiguration('tripilot').get<string[]>('visibleModelIds', []) ?? [])
 				.map((s) => String(s).trim())
@@ -3512,7 +3425,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			maxInputTokens: 0
 		};
 
-		const allRealModels: LmModelInfo[] = this.lastCopilotModels
+		const allRealModels: LmModelInfo[] = this.lastTrilcModels
 			.map((m) => {
 				const mult = typeof m.multiplier === 'number' ? m.multiplier : undefined;
 				return {
@@ -3535,8 +3448,8 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		if (!visibleModelIds.size || visibleModelIds.has('auto')) {
 			const now = Date.now();
 			const autoDiscount =
-				this.lastCopilotAutoDiscount && this.lastCopilotAutoDiscount.expiresAtMs > now
-					? this.lastCopilotAutoDiscount.label
+				this.lastTrilcAutoDiscount && this.lastTrilcAutoDiscount.expiresAtMs > now
+					? this.lastTrilcAutoDiscount.label
 					: undefined;
 			models.push({ ...autoModel, rightText: autoDiscount });
 		}
@@ -3545,39 +3458,39 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		return { models, selectedModelId: this.selectedModelId };
 	}
 
-	private prefetchCopilotAutoDiscount(stateHint?: ChatHostState): void {
+	private prefetchTrilcAutoDiscount(stateHint?: ChatHostState): void {
 		// Non-blocking: fetch /models/session and then re-post model list to show Auto discount.
 		const now = Date.now();
-		if (this.lastCopilotAutoDiscount && this.lastCopilotAutoDiscount.expiresAtMs - 30_000 > now) return;
-		if (this.copilotAutoPrefetchInFlight) return;
+		if (this.lastTrilcAutoDiscount && this.lastTrilcAutoDiscount.expiresAtMs - 30_000 > now) return;
+		if (this.trilcAutoPrefetchInFlight) return;
 		const state = stateHint ?? this.hostStates.sidebar;
-		this.copilotAutoPrefetchInFlight = (async () => {
+		this.trilcAutoPrefetchInFlight = (async () => {
 			try {
-				await this.ensureCopilotAutoSession(state);
-				if (this.getChatProvider() === 'copilot-direct') {
+				await this.ensureTrilcAutoSession(state);
+				if (this.getChatProvider() === 'trilc-direct') {
 					const whitelistSize = (
 						vscode.workspace.getConfiguration('tripilot').get<string[]>('visibleModelIds', []) ?? []
 					)
 						.map((s) => String(s).trim())
 						.filter(Boolean).length;
-					const built = this.buildCopilotDirectLmModels();
+					const built = this.buildTrilcDirectLmModels();
 					this.postAny({
 						type: 'lmModels',
 						models: built.models,
 						selectedModelId: built.selectedModelId,
-						provider: 'copilot-direct',
-						runtimeCount: this.lastCopilotModels.length,
+						provider: 'trilc-direct',
+						runtimeCount: this.lastTrilcModels.length,
 						whitelistSize,
 						filteredCount: built.models.length
 					});
 				}
 			} finally {
-				this.copilotAutoPrefetchInFlight = undefined;
+				this.trilcAutoPrefetchInFlight = undefined;
 			}
 		})();
 	}
 
-	private async ensureCopilotAutoSession(state: ChatHostState): Promise<
+	private async ensureTrilcAutoSession(state: ChatHostState): Promise<
 		| {
 			sessionToken: string;
 			expiresAtMs: number;
@@ -3592,10 +3505,10 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			return cached;
 		}
 
-		let session: CopilotAutoModelsSession | undefined;
+		let session: TrilcAutoModelsSession | undefined;
 		try {
-			const token = await this.copilotTokenManager.getCopilotToken();
-			session = await this.copilotClient.createAutoModelsSession({
+			const token = await this.trilcClient.getCopilotToken();
+			session = await this.trilcClient.createAutoModelsSession({
 				token,
 				modelHint: 'auto',
 				previousSessionToken: cached?.sessionToken
@@ -3616,9 +3529,9 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 
 		const label = formatDiscountLabel(discountRange);
 		if (label) {
-			this.lastCopilotAutoDiscount = { label, expiresAtMs };
+			this.lastTrilcAutoDiscount = { label, expiresAtMs };
 		} else {
-			this.lastCopilotAutoDiscount = undefined;
+			this.lastTrilcAutoDiscount = undefined;
 		}
 
 		return state.copilotAutoSession;
@@ -3800,12 +3713,12 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 				kind: 'sidebar',
 				webview: sidebarWebview,
 				conversation: [],
-				copilotConversation: [],
+				trilcConversation: [],
 				transcript: [],
 				contextAttachments: []
 			};
 			this.ensureSystemInstructionUpToDate(freshSidebar);
-			this.ensureCopilotSystemInstructionUpToDate(freshSidebar);
+			this.ensureTrilcSystemInstructionUpToDate(freshSidebar);
 
 			// Migrate running host state to editor.
 			running.kind = 'editor';
@@ -4547,60 +4460,39 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
 
-	private getChatProvider(): 'vscode-lm' | 'copilot-direct' | 'models-direct' {
-		const raw = String(vscode.workspace.getConfiguration('tripilot').get<string>('chatProvider', 'vscode-lm') ?? 'vscode-lm');
-		if (raw === 'copilot-direct') return 'copilot-direct';
-		if (raw === 'models-direct') return 'models-direct';
+	private getChatProvider(): 'vscode-lm' | 'trilc-direct' {
+		const raw = String(vscode.workspace.getConfiguration('tripilot').get<string>('chatProvider', 'trilc-direct') ?? 'trilc-direct');
+		if (raw === 'trilc-direct') return 'trilc-direct';
 		return 'vscode-lm';
 	}
 
-	private getModelsDirectConfig(): {
-		baseUrl: string;
-		apiKey?: string;
-		defaultModel?: string;
-		modelTagDefault?: string;
-		modelTags?: Record<string, string>;
-		modelExtras?: Record<string, any>;
-		extraFieldName?: string;
-	} {
+	private getTrilcConfig(): TrilcClientConfig {
 		const cfg = vscode.workspace.getConfiguration('tripilot');
-		const baseUrl = String(cfg.get<string>('modelsDirect.baseUrl', '') ?? '').trim();
-		const apiKey = String(cfg.get<string>('modelsDirect.apiKey', '') ?? '').trim();
-		const defaultModel = String(cfg.get<string>('modelsDirect.defaultModel', '') ?? '').trim();
-		const modelTagDefault = String(cfg.get<string>('modelsDirect.modelTagDefault', '') ?? '').trim();
-		const extraFieldName = String(cfg.get<string>('modelsDirect.extraFieldName', 'tripilot') ?? 'tripilot').trim();
-		const modelTagsRaw = cfg.get<any>('modelsDirect.modelTags', undefined);
-		const modelExtrasRaw = cfg.get<any>('modelsDirect.modelExtras', undefined);
-		const modelTags = modelTagsRaw && typeof modelTagsRaw === 'object' ? (modelTagsRaw as Record<string, string>) : undefined;
-		const modelExtras = modelExtrasRaw && typeof modelExtrasRaw === 'object' ? (modelExtrasRaw as Record<string, any>) : undefined;
+		const baseUrl = String(cfg.get<string>('trilcDirect.baseUrl', 'http://127.0.0.1:19840') ?? '').trim();
+		const apiKey = String(cfg.get<string>('trilcDirect.apiKey', '') ?? '').trim();
 		return {
 			baseUrl,
 			apiKey: apiKey || undefined,
-			defaultModel: defaultModel || undefined,
-			modelTagDefault: modelTagDefault || undefined,
-			modelTags,
-			modelExtras,
-			extraFieldName: extraFieldName || undefined
 		};
 	}
 
-	private getCopilotAuthMode(): 'minimal' | 'permissive' {
+	private getTrilcAuthMode(): 'minimal' | 'permissive' {
 		const raw = String(
-			vscode.workspace.getConfiguration('tripilot').get<string>('copilotDirect.authMode', 'minimal') ?? 'minimal'
+			vscode.workspace.getConfiguration('tripilot').get<string>('trilcDirect.authMode', 'minimal') ?? 'minimal'
 		);
 		return raw === 'permissive' ? 'permissive' : 'minimal';
 	}
 
-	private ensureCopilotSystemInstructionUpToDate(state: ChatHostState): void {
+	private ensureTrilcSystemInstructionUpToDate(state: ChatHostState): void {
 		const instruction = this.buildSystemInstructionForProfile(this.selectedAgentProfileId);
 		const msg: OpenAIChatMessage = { role: 'system', content: instruction };
-		if (!state.copilotConversation) state.copilotConversation = [];
-		if (!state.copilotConversation.length) {
-			state.copilotConversation.push(msg);
+		if (!state.trilcConversation) state.trilcConversation = [];
+		if (!state.trilcConversation.length) {
+			state.trilcConversation.push(msg);
 		} else {
-			state.copilotConversation[0] = msg;
+			state.trilcConversation[0] = msg;
 		}
-		state.copilotInteractionId ??= createUuid();
+		state.trilcInteractionId ??= createUuid();
 	}
 
 
@@ -6298,8 +6190,8 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 				this.selectedAgentProfileId = id;
 				this.ensureSystemInstructionUpToDate(this.hostStates.sidebar);
 				this.ensureSystemInstructionUpToDate(this.hostStates.editor);
-				this.ensureCopilotSystemInstructionUpToDate(this.hostStates.sidebar);
-				this.ensureCopilotSystemInstructionUpToDate(this.hostStates.editor);
+				this.ensureTrilcSystemInstructionUpToDate(this.hostStates.sidebar);
+				this.ensureTrilcSystemInstructionUpToDate(this.hostStates.editor);
 				await this.context.globalState.update('tripilot.selectedAgentProfileId', id);
 				this.postAgentProfileAndLabel();
 				TripilotSettingsPanel.syncActiveAgentProfileFromChat(id);
@@ -6369,32 +6261,32 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			case 'manageModels': {
 				try {
 					// copilot-direct uses Copilot's /models and does not rely on VS Code's LM registry UI.
-					if (this.getChatProvider() === 'copilot-direct') {
+					if (this.getChatProvider() === 'trilc-direct') {
 						this.postToHost(state, { type: 'chatAppend', role: 'tool', text: '打开 Tripilot Settings → Models…' });
 						// Open Settings immediately; do any network checks in the background.
 						TripilotSettingsPanel.show(this.context, this.mcpManager, 'models');
 						void (async () => {
 							try {
-								const token = await this.copilotTokenManager.getCopilotToken();
-								this.lastCopilotModels = await this.copilotClient.listModels(token);
+								const cfg = this.getTrilcConfig();
+								this.lastTrilcModels = await this.trilcClient.listModels(cfg);
 								await this.refreshModelsAndPost(state);
 							} catch (err) {
 								const message = err instanceof Error ? err.message : String(err);
-								this.postToHost(state, { type: 'chatAppend', role: 'tool', text: `加载 Copilot 模型失败：${message}` });
+								this.postToHost(state, { type: 'chatAppend', role: 'tool', text: `加载 TriLC 模型失败：${message}` });
 							}
 						})();
 						return;
 					}
 
 					// models-direct also relies on a remote /v1/models catalog.
-					if (this.getChatProvider() === 'models-direct') {
+					if (this.getChatProvider() === 'trilc-direct') {
 						this.postToHost(state, { type: 'chatAppend', role: 'tool', text: '打开 Tripilot Settings → Models…（models-direct）' });
 						TripilotSettingsPanel.show(this.context, this.mcpManager, 'models');
 						void (async () => {
 							try {
-								const cfg = this.getModelsDirectConfig();
-								if (!cfg.baseUrl) throw new Error('未配置 tripilot.modelsDirect.baseUrl');
-								this.lastModelsDirectModels = await this.modelsDirectClient.listModels({ baseUrl: cfg.baseUrl, apiKey: cfg.apiKey });
+								const cfg = this.getTrilcConfig();
+								if (!cfg.baseUrl) throw new Error('未配置 tripilot.trilcDirect.baseUrl');
+								this.lastTrilcModels = await this.trilcClient.listModels({ baseUrl: cfg.baseUrl, apiKey: cfg.apiKey });
 								await this.refreshModelsAndPost(state);
 							} catch (err) {
 								const message = err instanceof Error ? err.message : String(err);
@@ -6465,13 +6357,13 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 
 	public async refreshModelsAndPost(state?: ChatHostState) {
 		try {
-			if (this.getChatProvider() === 'copilot-direct') {
-				const copilotToken = await this.copilotTokenManager.getCopilotToken();
-				this.lastCopilotModels = await this.copilotClient.listModels(copilotToken);
-				if (!this.lastCopilotModels.length) {
+			if (this.getChatProvider() === 'trilc-direct') {
+				const cfg = this.getTrilcConfig();
+				this.lastTrilcModels = await this.trilcClient.listModels(cfg);
+				if (!this.lastTrilcModels.length) {
 					const text =
-						'Copilot /models 返回空列表，因此模型菜单只会显示 Auto。' +
-						'\n如果你在调试“隔离 profile”窗口，请确认已在该窗口完成 GitHub 登录，并且账号具备 Copilot 权限。';
+						'TriLC /v1/models 返回空列表，因此模型菜单只会显示 Auto。' +
+						'\n请确认 TriLC 服务已启动且 /v1/models 端点可访问。';
 					if (state) {
 						this.postToHost(state, { type: 'chatAppend', role: 'tool', text });
 					} else {
@@ -6480,9 +6372,9 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 				}
 
 				// If Auto is visible and we don't yet have a discount label, prefetch /models/session in background.
-				this.prefetchCopilotAutoDiscount(state);
+				this.prefetchTrilcAutoDiscount(state);
 
-				const built = this.buildCopilotDirectLmModels();
+				const built = this.buildTrilcDirectLmModels();
 				const models = built.models;
 
 				if (!this.selectedModelId) {
@@ -6506,15 +6398,15 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 					type: 'lmModels',
 					models,
 					selectedModelId: this.selectedModelId,
-					provider: 'copilot-direct',
-					runtimeCount: this.lastCopilotModels.length,
+					provider: 'trilc-direct',
+					runtimeCount: this.lastTrilcModels.length,
 					filteredCount: models.length
 				});
 				return;
 			}
 
-			if (this.getChatProvider() === 'models-direct') {
-				const cfg = this.getModelsDirectConfig();
+			if (this.getChatProvider() === 'trilc-direct') {
+				const cfg = this.getTrilcConfig();
 				if (!cfg.baseUrl) {
 					const models: LmModelInfo[] = [
 						{ id: 'auto', name: 'Auto', vendor: 'tripilot', family: 'auto', version: 'auto', maxInputTokens: 0, rightText: '1x' }
@@ -6523,7 +6415,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 						type: 'lmModels',
 						models,
 						selectedModelId: this.selectedModelId,
-						provider: 'models-direct',
+						provider: 'trilc-direct',
 						runtimeCount: 0,
 						filteredCount: models.length
 					});
@@ -6531,9 +6423,9 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 				}
 
 				try {
-					this.lastModelsDirectModels = await this.modelsDirectClient.listModels({ baseUrl: cfg.baseUrl, apiKey: cfg.apiKey });
+					this.lastTrilcModels = await this.trilcClient.listModels({ baseUrl: cfg.baseUrl, apiKey: cfg.apiKey });
 				} catch (err) {
-					this.lastModelsDirectModels = [];
+					this.lastTrilcModels = [];
 					const message = err instanceof Error ? err.message : String(err);
 					const text = `加载 Models Direct 模型失败：${message}`;
 					if (state) this.postToHost(state, { type: 'chatAppend', role: 'tool', text });
@@ -6555,7 +6447,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 					maxInputTokens: 0
 				};
 
-				const allRealModels: LmModelInfo[] = this.lastModelsDirectModels
+				const allRealModels: LmModelInfo[] = this.lastTrilcModels
 					.map((m) => {
 						const providerLabel = inferModelsDirectProviderLabel({
 							provider: m.provider,
@@ -6565,8 +6457,8 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 						return {
 							id: m.id,
 							name: m.displayName ?? m.id,
-							vendor: 'models-direct',
-							family: String(m.modelTag || 'models-direct'),
+							vendor: 'trilc-direct',
+							family: String(m.modelTag || 'trilc-direct'),
 							version: 'n/a',
 							maxInputTokens: m.maxInputTokens ?? 0,
 							rightText: providerLabel
@@ -6587,7 +6479,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 				}
 				models.push(...filteredRealModels);
 
-				const defaultModelId = cfg.defaultModel || this.lastModelsDirectModels[0]?.id;
+				const defaultModelId = cfg.defaultModel || this.lastTrilcModels[0]?.id;
 				if (!this.selectedModelId) {
 					this.selectedModelId = (!visibleModelIds.size || visibleModelIds.has('auto')) ? 'auto' : defaultModelId;
 					if (this.selectedModelId) await this.context.globalState.update('tripilot.selectedModelId', this.selectedModelId);
@@ -6604,8 +6496,8 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 					type: 'lmModels',
 					models,
 					selectedModelId: this.selectedModelId,
-					provider: 'models-direct',
-					runtimeCount: this.lastModelsDirectModels.length,
+					provider: 'trilc-direct',
+					runtimeCount: this.lastTrilcModels.length,
 					whitelistSize: visibleModelIds.size,
 					filteredCount: models.length
 				});
@@ -6748,33 +6640,22 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		return out;
 	}
 
-	private getSelectedCopilotModelId(): string | undefined {
-		// In copilot-direct we allow selecting 'auto' and resolve it via /models/session at request time.
+	private getSelectedTrilcModelId(): string | undefined {
 		if (this.selectedModelId) return this.selectedModelId;
 		// Best-effort fallback if selection wasn't initialized.
-		return this.lastCopilotModels[0]?.id ?? 'auto';
+		return this.lastTrilcModels[0]?.id ?? 'auto';
 	}
 
-	private getFallbackNonAutoCopilotModelId(): string | undefined {
-		const prefer = ['gpt-4o-mini', 'gpt-4o-mini-2024-07-18', 'gpt-4o', 'gpt-4.1', 'gpt-4'];
+	private getFallbackNonAutoTrilcModelId(): string | undefined {
+		const prefer = ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307'];
 		for (const id of prefer) {
-			if (this.lastCopilotModels.some((m) => m.id === id)) return id;
+			if (this.lastTrilcModels.some((m) => m.id === id)) return id;
 		}
-		return this.lastCopilotModels.find((m) => m.id && m.id !== 'auto')?.id;
+		return this.lastTrilcModels.find((m) => m.id && m.id !== 'auto')?.id;
 	}
 
-	private getSelectedModelsDirectModelId(): string | undefined {
-		if (this.selectedModelId && this.selectedModelId !== 'auto') {
-			return this.selectedModelId;
-		}
-		const cfg = this.getModelsDirectConfig();
-		if (cfg.defaultModel && this.lastModelsDirectModels.some((m) => m.id === cfg.defaultModel)) {
-			return cfg.defaultModel;
-		}
-		return this.lastModelsDirectModels[0]?.id;
-	}
 
-	private async runCopilotDirectRequest(
+	private async runTrilcDirectRequest(
 		state: ChatHostState,
 		args: {
 			modelId: string;
@@ -6782,115 +6663,9 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			userText: string;
 		}
 	): Promise<void> {
-		const built = await this.buildToolsForRequest(
-			this.selectedAgentProfileId,
-			args.directives.serverReferences,
-			args.directives.toolReferences
-		);
-
-		state.copilotConversation ??= [];
-		this.ensureCopilotSystemInstructionUpToDate(state);
-
-		let didStreamAssistant = false;
-		let effectiveModelId = args.modelId;
-		const additionalHeaders: Record<string, string> = {
-			'X-Interaction-Id': state.copilotInteractionId ?? createUuid(),
-			'X-Initiator': 'user'
-		};
-		if (effectiveModelId === 'auto') {
-			const auto = await this.ensureCopilotAutoSession(state);
-			if (auto?.sessionToken) {
-				additionalHeaders['Copilot-Session-Token'] = auto.sessionToken;
-			}
-			effectiveModelId = auto?.selectedModel || this.getFallbackNonAutoCopilotModelId() || effectiveModelId;
-		}
-
-		const finalText = await runCopilotDirectToolCallingLoop({
-			client: this.copilotClient,
-			tokenManager: this.copilotTokenManager,
-			modelId: effectiveModelId,
-			conversation: state.copilotConversation,
-			enabledTools: built.enabledTools,
-			toolDefinitions: built.toolDefinitions as unknown as OpenAITool[],
-			commandTools: built.commandTools,
-			mcpManager: this.mcpManager,
-			policy: {
-				agentProfileId: this.selectedAgentProfileId,
-				askStudySandboxDir: String(
-					vscode.workspace.getConfiguration('tripilot').get<string>('askStudySandboxDir', '.tripilot/ask-study') ??
-						'.tripilot/ask-study'
-				)
-			},
-			maxIterations: vscode.workspace.getConfiguration('tripilot').get<number>('maxToolIterations', 6),
-			intent: 'conversation-panel',
-			additionalHeaders,
-			postStatus: (s) => this.setAndPostStatus(state, s.status, s.detail),
-			postAssistantStart: (initialText) => {
-				didStreamAssistant = true;
-				state.inProgressAssistantText = initialText ?? '';
-				this.postToHost(state, { type: 'chatAssistantStart', initialText });
-			},
-			postAssistantDelta: (delta) => {
-				didStreamAssistant = true;
-				state.inProgressAssistantText = (state.inProgressAssistantText ?? '') + delta;
-				this.postToHost(state, { type: 'chatAssistantDelta', delta });
-			},
-			postAssistantEnd: () => {
-				this.postToHost(state, { type: 'chatAssistantEnd' });
-				state.inProgressAssistantText = undefined;
-			},
-			postToolInvocationBegin: (m) => {
-				this.postToHost(state, m);
-			},
-			postToolInvocationEnd: (m) => {
-				this.postToHost(state, m);
-			},
-			postTodoList: (m) => {
-				this.postToHost(state, m);
-			},
-			postToolTrace: (toolText) => {
-				this.postToHost(state, { type: 'chatAppend', role: 'tool', text: toolText });
-				state.transcript.push({ role: 'tool', text: toolText });
-				if (!(state.replayState?.active && state.replayState?.locked)) {
-					void this.postSubagentTree(state);
-				}
-				void this.appendHistory(state, {
-					kind: 'tool_trace',
-					text: toolText,
-					profileId: this.selectedAgentProfileId,
-					modelId: this.selectedModelId
-				});
-			},
-			requestEditsApproval: (a) => this.requestEditsApproval(state, a),
-			postEditsReview: (a) => this.postEditsReview(state, a),
-			abortSignal: state.abortController!.signal,
-			token: state.lmCancelSource!.token
-		});
-
-		if (!didStreamAssistant) {
-			this.postToHost(state, { type: 'chatAppend', role: 'assistant', text: finalText });
-		}
-		state.transcript.push({ role: 'assistant', text: finalText });
-		await this.appendHistory(state, {
-			kind: 'assistant_message',
-			text: finalText,
-			profileId: this.selectedAgentProfileId,
-			modelId: this.selectedModelId
-		});
-		this.appendCheckpoint(state);
-	}
-
-	private async runModelsDirectRequest(
-		state: ChatHostState,
-		args: {
-			modelId: string;
-			directives: ToolReferences;
-			userText: string;
-		}
-	): Promise<void> {
-		const cfg = this.getModelsDirectConfig();
+		const cfg = this.getTrilcConfig();
 		if (!cfg.baseUrl) {
-			throw new Error('未配置 tripilot.modelsDirect.baseUrl');
+			throw new Error('未配置 tripilot.trilcDirect.baseUrl');
 		}
 
 		const built = await this.buildToolsForRequest(
@@ -6899,98 +6674,77 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			args.directives.toolReferences
 		);
 
-		state.copilotConversation ??= [];
-		this.ensureCopilotSystemInstructionUpToDate(state);
+		state.trilcConversation ??= [];
+		this.ensureTrilcSystemInstructionUpToDate(state);
 
-		const modelInfo = this.lastModelsDirectModels.find((m) => m.id === args.modelId);
-		const modelTagFromConfig = cfg.modelTags?.[args.modelId];
-		const modelExtraFromConfig = cfg.modelExtras?.[args.modelId];
-		const effectiveModelTag = modelTagFromConfig || modelInfo?.modelTag || cfg.modelTagDefault;
-		const effectiveModelExtra = modelExtraFromConfig ?? modelInfo?.modelExtra;
+		// Convert OpenAI-format conversation to Anthropic TrilcMessage format
+		const messages: TrilcMessage[] = state.trilcConversation.map((m) => ({
+			role: (m.role === 'assistant' ? 'assistant' : 'user') as 'user' | 'assistant',
+			content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+		}));
+
+		// Convert tool definitions to TrilcTool format
+		const trilcTools: TrilcTool[] = built.toolDefinitions
+			.filter((t) => built.enabledTools.has(t.function.name))
+			.map((t) => ({
+				name: t.function.name,
+				description: t.function.description ?? '',
+				input_schema: (t.function.parameters ?? {}) as Record<string, unknown>,
+			}));
 
 		let didStreamAssistant = false;
-		const finalText = await runModelsDirectToolCallingLoop({
-			client: this.modelsDirectClient,
+		let streamedText = '';
+
+		const { content: finalText, toolCalls } = await this.trilcClient.streamChat({
 			cfg: { baseUrl: cfg.baseUrl, apiKey: cfg.apiKey },
-			modelId: args.modelId,
-			conversation: state.copilotConversation,
-			enabledTools: built.enabledTools,
-			toolDefinitions: built.toolDefinitions as unknown as OpenAITool[],
-			commandTools: built.commandTools,
-			mcpManager: this.mcpManager,
-			policy: {
-				agentProfileId: this.selectedAgentProfileId,
-				askStudySandboxDir: String(
-					vscode.workspace.getConfiguration('tripilot').get<string>('askStudySandboxDir', '.tripilot/ask-study') ??
-						'.tripilot/ask-study'
-				)
-			},
-			maxIterations: vscode.workspace.getConfiguration('tripilot').get<number>('maxToolIterations', 6),
-			intent: 'conversation-panel',
-			additionalHeaders: {
-				'X-Interaction-Id': state.copilotInteractionId ?? createUuid(),
-				'X-Initiator': 'user'
-			},
-			requestMeta: {
-				modelTag: effectiveModelTag,
-				modelExtra: effectiveModelExtra,
-				extraFieldName: cfg.extraFieldName
-			},
-			postStatus: (s) => this.setAndPostStatus(state, s.status, s.detail),
-			postAssistantStart: (initialText) => {
-				didStreamAssistant = true;
-				state.inProgressAssistantText = initialText ?? '';
-				this.postToHost(state, { type: 'chatAssistantStart', initialText });
-			},
-			postAssistantDelta: (delta) => {
-				didStreamAssistant = true;
-				state.inProgressAssistantText = (state.inProgressAssistantText ?? '') + delta;
-				this.postToHost(state, { type: 'chatAssistantDelta', delta });
-			},
-			postAssistantEnd: () => {
-				this.postToHost(state, { type: 'chatAssistantEnd' });
-				state.inProgressAssistantText = undefined;
-			},
-			postToolInvocationBegin: (m) => {
-				this.postToHost(state, m);
-			},
-			postToolInvocationEnd: (m) => {
-				this.postToHost(state, m);
-			},
-			postTodoList: (m) => {
-				this.postToHost(state, m);
-			},
-			postToolTrace: (toolText) => {
-				this.postToHost(state, { type: 'chatAppend', role: 'tool', text: toolText });
-				state.transcript.push({ role: 'tool', text: toolText });
-				if (!(state.replayState?.active && state.replayState?.locked)) {
-					void this.postSubagentTree(state);
-				}
-				void this.appendHistory(state, {
-					kind: 'tool_trace',
-					text: toolText,
-					profileId: this.selectedAgentProfileId,
-					modelId: this.selectedModelId
-				});
-			},
-			requestEditsApproval: (a) => this.requestEditsApproval(state, a),
-			postEditsReview: (a) => this.postEditsReview(state, a),
+			model: args.modelId,
+			system: state.trilcSystemInstruction,
+			messages,
+			tools: trilcTools.length ? trilcTools : undefined,
 			abortSignal: state.abortController!.signal,
-			token: state.lmCancelSource!.token
+			onEvent: (event) => {
+				if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta.text) {
+					if (!didStreamAssistant) {
+						didStreamAssistant = true;
+						state.inProgressAssistantText = '';
+						this.postToHost(state, { type: 'chatAssistantStart', initialText: '' });
+					}
+					state.inProgressAssistantText = (state.inProgressAssistantText ?? '') + event.delta.text;
+					streamedText += event.delta.text;
+					this.postToHost(state, { type: 'chatAssistantDelta', delta: event.delta.text });
+				} else if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
+					const name = event.content_block.name ?? 'unknown';
+					this.postToHost(state, {
+						type: 'chatToolInvocationBegin',
+						invocationId: event.content_block.id ?? '',
+						toolName: name,
+						inputPreview: '',
+					});
+				} else if (event.type === 'content_block_stop' && event.index !== undefined) {
+					// Block complete — nothing extra to post here
+				}
+			},
 		});
 
-		if (!didStreamAssistant) {
-			this.postToHost(state, { type: 'chatAppend', role: 'assistant', text: finalText });
+		if (didStreamAssistant) {
+			this.postToHost(state, { type: 'chatAssistantEnd' });
+			state.inProgressAssistantText = undefined;
 		}
-		state.transcript.push({ role: 'assistant', text: finalText });
+
+		const displayText = streamedText || finalText || '';
+		if (!didStreamAssistant && displayText) {
+			this.postToHost(state, { type: 'chatAppend', role: 'assistant', text: displayText });
+		}
+		state.transcript.push({ role: 'assistant', text: displayText });
 		await this.appendHistory(state, {
 			kind: 'assistant_message',
-			text: finalText,
+			text: displayText,
 			profileId: this.selectedAgentProfileId,
-			modelId: this.selectedModelId
+			modelId: this.selectedModelId,
 		});
 		this.appendCheckpoint(state);
 	}
+
 
 	private async handleUserMessage(text: string, state: ChatHostState) {
 		if (!text.trim()) return;
@@ -7057,7 +6811,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 					modelId: this.selectedModelId
 				});
 		this.ensureSystemInstructionUpToDate(state);
-		this.ensureCopilotSystemInstructionUpToDate(state);
+		this.ensureTrilcSystemInstructionUpToDate(state);
 
 		const promptSyntax = this.parsePromptSyntax(text);
 		const directives = this.parseToolDirectives(text);
@@ -7108,9 +6862,9 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			this.postToHost(state, { type: 'chatAppend', role: 'tool', text: warn });
 			state.transcript.push({ role: 'tool', text: warn });
 		}
-		if (chatProvider === 'copilot-direct' || chatProvider === 'models-direct') {
-			state.copilotConversation ??= [];
-			state.copilotConversation.push({ role: 'user', content: effectiveText });
+		if (chatProvider === 'trilc-direct') {
+			state.trilcConversation ??= [];
+			state.trilcConversation.push({ role: 'user', content: effectiveText });
 		} else {
 			state.conversation.push(vscode.LanguageModelChatMessage.User(effectiveText));
 		}
@@ -7122,41 +6876,20 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		state.lmCancelSource = new vscode.CancellationTokenSource();
 
 		try {
-			if (chatProvider === 'copilot-direct') {
-				if (!this.lastCopilotModels.length) {
-					await this.refreshModelsAndPost(state);
-				}
-				const modelId = this.getSelectedCopilotModelId();
-				if (!modelId) {
-					throw new Error(
-						'未检测到 Copilot 可用模型。\n' +
-						'这通常不是“没登录”，而是：账号没有 Copilot 权限、选择了错误的 GitHub 会话（多账号）、或网络阻断 copilot-proxy。\n' +
-						'可尝试：将 tripilot.copilotDirect.authMode 设为 permissive；然后在“管理 Copilot 模型…”里重试。'
-					);
-				}
-				await this.runCopilotDirectRequest(state, {
-					modelId,
-					directives,
-					userText: effectiveText
-				});
-				this.setAndPostStatus(state, 'idle');
-				return;
-			}
-
-			if (chatProvider === 'models-direct') {
-				const cfg = this.getModelsDirectConfig();
+			if (chatProvider === 'trilc-direct') {
+				const cfg = this.getTrilcConfig();
 				if (!cfg.baseUrl) {
-					throw new Error('未配置 tripilot.modelsDirect.baseUrl');
+					throw new Error('未配置 tripilot.trilcDirect.baseUrl');
 				}
 
-				if (!this.lastModelsDirectModels.length) {
+				if (!this.lastTrilcModels.length) {
 					await this.refreshModelsAndPost(state);
 				}
-				const modelId = this.getSelectedModelsDirectModelId();
+				const modelId = this.getSelectedTrilcModelId();
 				if (!modelId) {
-					throw new Error('未检测到 Models Direct 可用模型。请先在 Settings → Models 里检查 /v1/models 是否可用。');
+					throw new Error('未检测到 TriLC Direct 可用模型。请先在 Settings → Models 里检查 /v1/models 是否可用。');
 				}
-				await this.runModelsDirectRequest(state, { modelId, directives, userText: effectiveText });
+				await this.runTrilcDirectRequest(state, { modelId, directives, userText: effectiveText });
 				this.setAndPostStatus(state, 'idle');
 				return;
 			}
@@ -7681,11 +7414,11 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			: 0;
 		const conversationSnapshot = [...state.conversation];
 		let copilotConversationSnapshot: OpenAIChatMessage[] | undefined = undefined;
-		if (state.copilotConversation) {
+		if (state.trilcConversation) {
 			try {
-				copilotConversationSnapshot = structuredClone(state.copilotConversation);
+				copilotConversationSnapshot = structuredClone(state.trilcConversation);
 			} catch {
-				copilotConversationSnapshot = [...state.copilotConversation];
+				copilotConversationSnapshot = [...state.trilcConversation];
 			}
 		}
 
@@ -7776,9 +7509,9 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			state.conversation = [...rec.conversationBefore];
 			if (rec.copilotConversationBefore) {
 				try {
-					state.copilotConversation = structuredClone(rec.copilotConversationBefore);
+					state.trilcConversation = structuredClone(rec.copilotConversationBefore);
 				} catch {
-					state.copilotConversation = [...rec.copilotConversationBefore];
+					state.trilcConversation = [...rec.copilotConversationBefore];
 				}
 			}
 			this.setAndPostStatus(state, 'idle');
@@ -7825,11 +7558,11 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		const transcriptBefore: ChatTranscriptItem[] = [...state.transcript];
 		const conversationBefore = [...state.conversation];
 		let copilotConversationBefore: OpenAIChatMessage[] | undefined = undefined;
-		if (state.copilotConversation) {
+		if (state.trilcConversation) {
 			try {
-				copilotConversationBefore = structuredClone(state.copilotConversation);
+				copilotConversationBefore = structuredClone(state.trilcConversation);
 			} catch {
-				copilotConversationBefore = [...state.copilotConversation];
+				copilotConversationBefore = [...state.trilcConversation];
 			}
 		}
 		const timelineBefore = [...this.appliedEditsTimelineByHost[state.kind]];
@@ -7889,9 +7622,9 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		state.conversation = [...cp.conversationSnapshot];
 		if (cp.copilotConversationSnapshot) {
 			try {
-				state.copilotConversation = structuredClone(cp.copilotConversationSnapshot);
+				state.trilcConversation = structuredClone(cp.copilotConversationSnapshot);
 			} catch {
-				state.copilotConversation = [...cp.copilotConversationSnapshot];
+				state.trilcConversation = [...cp.copilotConversationSnapshot];
 			}
 		}
 		this.setAndPostStatus(state, 'idle');
@@ -8229,397 +7962,6 @@ async function runLmToolCallingLoop(args: {
 
 		// Feed tool results back into the model.
 		args.conversation.push(vscode.LanguageModelChatMessage.User(toolResultParts));
-	}
-
-	throw new Error(`Tool loop exceeded max iterations (${args.maxIterations}).`);
-}
-
-async function runModelsDirectToolCallingLoop(args: {
-	client: ModelsDirectClient;
-	cfg: { baseUrl: string; apiKey?: string };
-	modelId: string;
-	conversation: OpenAIChatMessage[];
-	enabledTools: Set<string>;
-	toolDefinitions: OpenAITool[];
-	commandTools: Map<string, CommandToolConfig>;
-	mcpManager: McpClientManager;
-	policy?: ToolPolicy;
-	maxIterations: number;
-	intent?: string;
-	additionalHeaders?: Record<string, string>;
-	requestMeta?: { modelTag?: string; modelExtra?: any; extraFieldName?: string };
-	postStatus: (m: Extract<WebviewOutboundMessage, { type: 'chatSetStatus' }>) => void;
-	postAssistantStart?: (initialText?: string) => void;
-	postAssistantDelta?: (delta: string) => void;
-	postAssistantEnd?: () => void;
-	postToolTrace?: (text: string) => void;
-	postToolInvocationBegin?: (m: Extract<WebviewOutboundMessage, { type: 'chatToolInvocationBegin' }>) => void;
-	postToolInvocationEnd?: (m: Extract<WebviewOutboundMessage, { type: 'chatToolInvocationEnd' }>) => void;
-	postTodoList?: (m: Extract<WebviewOutboundMessage, { type: 'chatTodoList' }>) => void;
-	requestEditsApproval?: ToolRuntime['requestEditsApproval'];
-	postEditsReview?: ToolRuntime['postEditsReview'];
-	abortSignal: AbortSignal;
-	token: vscode.CancellationToken;
-}): Promise<string> {
-	const truncateForWebview = (text: string, max = 20_000) => {
-		const s = String(text ?? '');
-		if (s.length <= max) return s;
-		return s.slice(0, max) + `\n…(truncated, ${s.length - max} chars)`;
-	};
-
-	const runSubagent: ToolRuntime['runSubagent'] = async ({ prompt, description }) => {
-		args.abortSignal.throwIfAborted?.();
-		const enabledTools = new Set(args.enabledTools);
-		enabledTools.delete('runSubagent');
-		enabledTools.delete('agent.runSubagent');
-		const subConversation: OpenAIChatMessage[] = [
-			{
-				role: 'system',
-				content:
-					`You are a context-isolated subagent. Task: ${description}.\n` +
-					'Work autonomously and return ONLY the final result. Do not include intermediate reasoning or tool logs.'
-			},
-			{ role: 'user', content: String(prompt ?? '') }
-		];
-		return await runModelsDirectToolCallingLoop({
-			client: args.client,
-			cfg: args.cfg,
-			modelId: args.modelId,
-			conversation: subConversation,
-			enabledTools,
-			toolDefinitions: args.toolDefinitions,
-			commandTools: args.commandTools,
-			mcpManager: args.mcpManager,
-			policy: args.policy,
-			maxIterations: Math.min(8, Math.max(2, args.maxIterations)),
-			intent: args.intent,
-			additionalHeaders: args.additionalHeaders,
-			requestMeta: args.requestMeta,
-			postStatus: () => {
-				// keep subagent quiet
-			},
-			postAssistantStart: undefined,
-			postAssistantDelta: undefined,
-			postAssistantEnd: undefined,
-			postToolTrace: undefined,
-			requestEditsApproval: args.requestEditsApproval,
-			abortSignal: args.abortSignal,
-			token: args.token
-		});
-	};
-
-	const tools: OpenAITool[] = args.toolDefinitions.filter((t) => args.enabledTools.has(t.function.name));
-
-	for (let iteration = 0; iteration < args.maxIterations; iteration++) {
-		args.abortSignal.throwIfAborted?.();
-		if (args.token.isCancellationRequested) throw new Error('Canceled.');
-		args.postStatus({ type: 'chatSetStatus', status: iteration === 0 ? 'thinking' : 'running-tools' });
-
-		const abort = new AbortController();
-		const d1 = args.token.onCancellationRequested(() => abort.abort());
-		const onAbort = () => abort.abort();
-		args.abortSignal.addEventListener('abort', onAbort, { once: true });
-
-		let streamedAnyText = false;
-		try {
-			const result = await args.client.streamChatCompletions({
-				cfg: { baseUrl: args.cfg.baseUrl, apiKey: args.cfg.apiKey },
-				model: args.modelId,
-				messages: args.conversation,
-				tools: tools.length ? tools : undefined,
-				requestMeta: args.requestMeta,
-				headers: args.additionalHeaders,
-				signal: abort.signal,
-				onTextDelta: (delta) => {
-					if (!streamedAnyText) {
-						streamedAnyText = true;
-						args.postAssistantStart?.('');
-					}
-					args.postAssistantDelta?.(delta);
-				}
-			});
-
-			if (streamedAnyText) args.postAssistantEnd?.();
-
-			const assistantMsg: OpenAIChatMessage = {
-				role: 'assistant',
-				content: result.assistantText,
-				...(result.toolCalls.length ? { tool_calls: result.toolCalls } : {})
-			};
-			args.conversation.push(assistantMsg);
-
-			if (!result.toolCalls.length) {
-				return result.assistantText;
-			}
-
-			for (const call of result.toolCalls) {
-				const name = call.function.name;
-				const rawArgs = call.function.arguments ?? '';
-				let parsedArgs: any = {};
-				try {
-					parsedArgs = rawArgs ? JSON.parse(rawArgs) : {};
-				} catch {
-					parsedArgs = { _parseError: true, raw: rawArgs };
-				}
-
-				const invocationId = String(call.id ?? createUuid());
-				const inputPreview = safeOneLine(JSON.stringify(parsedArgs ?? {}));
-				args.postToolInvocationBegin?.({
-					type: 'chatToolInvocationBegin',
-					invocationId,
-					toolName: name,
-					inputPreview
-				});
-				args.postToolTrace?.(`→ ${name}(${inputPreview})`);
-				const startedAt = Date.now();
-				let resultText = '';
-				let ok = true;
-				try {
-					resultText = await executeToolCall(name, parsedArgs, {
-						abortSignal: args.abortSignal,
-						requestEditsApproval: args.requestEditsApproval,
-						postEditsReview: args.postEditsReview,
-						runSubagent,
-						mcpManager: args.mcpManager,
-						commandTools: args.commandTools,
-						policy: args.policy
-					});
-				} catch (err) {
-					ok = false;
-					resultText = JSON.stringify({ error: true, ...serializeUnknownError(err) }, null, 2);
-				}
-				const durationMs = Date.now() - startedAt;
-				const outputPreview = safeOneLine(resultText, 800);
-				args.postToolInvocationEnd?.({
-					type: 'chatToolInvocationEnd',
-					invocationId,
-					toolName: name,
-					ok,
-					outputPreview,
-					outputFull: truncateForWebview(resultText),
-					durationMs
-				});
-				args.postToolTrace?.(`← ${name}: ${outputPreview}`);
-
-				if (name === 'manage_todo_list') {
-					try {
-						const parsed = JSON.parse(resultText);
-						const todoList = Array.isArray(parsed?.todoList) ? parsed.todoList : [];
-						const note = typeof parsed?.note === 'string' ? parsed.note : undefined;
-						if (todoList.length) {
-							args.postTodoList?.({ type: 'chatTodoList', todoList, note });
-						}
-					} catch {
-						// ignore
-					}
-				}
-
-				args.conversation.push({ role: 'tool', tool_call_id: call.id, content: resultText });
-			}
-		} finally {
-			try {
-				args.abortSignal.removeEventListener('abort', onAbort);
-			} catch {
-				// ignore
-			}
-			d1.dispose();
-		}
-	}
-
-	throw new Error(`Tool loop exceeded max iterations (${args.maxIterations}).`);
-}
-
-async function runCopilotDirectToolCallingLoop(args: {
-	client: CopilotDirectClient;
-	tokenManager: CopilotTokenManager;
-	modelId: string;
-	conversation: OpenAIChatMessage[];
-	enabledTools: Set<string>;
-	toolDefinitions: OpenAITool[];
-	commandTools: Map<string, CommandToolConfig>;
-	mcpManager: McpClientManager;
-	policy?: ToolPolicy;
-	maxIterations: number;
-	intent?: string;
-	additionalHeaders?: Record<string, string>;
-	postStatus: (m: Extract<WebviewOutboundMessage, { type: 'chatSetStatus' }>) => void;
-	postAssistantStart?: (initialText?: string) => void;
-	postAssistantDelta?: (delta: string) => void;
-	postAssistantEnd?: () => void;
-	postToolTrace?: (text: string) => void;
-	postToolInvocationBegin?: (m: Extract<WebviewOutboundMessage, { type: 'chatToolInvocationBegin' }>) => void;
-	postToolInvocationEnd?: (m: Extract<WebviewOutboundMessage, { type: 'chatToolInvocationEnd' }>) => void;
-	postTodoList?: (m: Extract<WebviewOutboundMessage, { type: 'chatTodoList' }>) => void;
-	requestEditsApproval?: ToolRuntime['requestEditsApproval'];
-	postEditsReview?: ToolRuntime['postEditsReview'];
-	abortSignal: AbortSignal;
-	token: vscode.CancellationToken;
-}): Promise<string> {
-	const truncateForWebview = (text: string, max = 20_000) => {
-		const s = String(text ?? '');
-		if (s.length <= max) return s;
-		return s.slice(0, max) + `\n…(truncated, ${s.length - max} chars)`;
-	};
-
-	const runSubagent: ToolRuntime['runSubagent'] = async ({ prompt, description }) => {
-		args.abortSignal.throwIfAborted?.();
-		const enabledTools = new Set(args.enabledTools);
-		enabledTools.delete('runSubagent');
-		enabledTools.delete('agent.runSubagent');
-		const subConversation: OpenAIChatMessage[] = [
-			{
-				role: 'system',
-				content:
-					`You are a context-isolated subagent. Task: ${description}.\n` +
-					'Work autonomously and return ONLY the final result. Do not include intermediate reasoning or tool logs.'
-			},
-			{ role: 'user', content: String(prompt ?? '') }
-		];
-		return await runCopilotDirectToolCallingLoop({
-			client: args.client,
-			tokenManager: args.tokenManager,
-			modelId: args.modelId,
-			conversation: subConversation,
-			enabledTools,
-			toolDefinitions: args.toolDefinitions,
-			commandTools: args.commandTools,
-			mcpManager: args.mcpManager,
-			policy: args.policy,
-			maxIterations: Math.min(8, Math.max(2, args.maxIterations)),
-			intent: args.intent,
-			additionalHeaders: args.additionalHeaders,
-			postStatus: () => {
-				// keep subagent quiet
-			},
-			postAssistantStart: undefined,
-			postAssistantDelta: undefined,
-			postAssistantEnd: undefined,
-			postToolTrace: undefined,
-			requestEditsApproval: args.requestEditsApproval,
-			abortSignal: args.abortSignal,
-			token: args.token
-		});
-	};
-
-	const tools: OpenAITool[] = args.toolDefinitions.filter((t) => args.enabledTools.has(t.function.name));
-
-	for (let iteration = 0; iteration < args.maxIterations; iteration++) {
-		args.abortSignal.throwIfAborted?.();
-		if (args.token.isCancellationRequested) throw new Error('Canceled.');
-		args.postStatus({ type: 'chatSetStatus', status: iteration === 0 ? 'thinking' : 'running-tools' });
-
-		const copilotToken = await args.tokenManager.getCopilotToken();
-
-		const abort = new AbortController();
-		const d1 = args.token.onCancellationRequested(() => abort.abort());
-		const onAbort = () => abort.abort();
-		args.abortSignal.addEventListener('abort', onAbort, { once: true });
-
-		let streamedAnyText = false;
-		try {
-			const result = await args.client.streamChatCompletions({
-				copilotToken,
-				model: args.modelId,
-				messages: args.conversation,
-				tools: tools.length ? tools : undefined,
-				intent: args.intent,
-				headers: args.additionalHeaders,
-				signal: abort.signal,
-				onTextDelta: (delta) => {
-					if (!streamedAnyText) {
-						streamedAnyText = true;
-						args.postAssistantStart?.('');
-					}
-					args.postAssistantDelta?.(delta);
-				}
-			});
-
-			if (streamedAnyText) args.postAssistantEnd?.();
-
-			// Append assistant message (with tool calls if present).
-			const assistantMsg: OpenAIChatMessage = {
-				role: 'assistant',
-				content: result.assistantText,
-				...(result.toolCalls.length ? { tool_calls: result.toolCalls } : {})
-			};
-			args.conversation.push(assistantMsg);
-
-			if (!result.toolCalls.length) {
-				return result.assistantText;
-			}
-
-			for (const call of result.toolCalls) {
-				const name = call.function.name;
-				const rawArgs = call.function.arguments ?? '';
-				let parsedArgs: any = {};
-				try {
-					parsedArgs = rawArgs ? JSON.parse(rawArgs) : {};
-				} catch {
-					parsedArgs = { _parseError: true, raw: rawArgs };
-				}
-
-				const invocationId = String(call.id ?? createUuid());
-				const inputPreview = safeOneLine(JSON.stringify(parsedArgs ?? {}));
-				args.postToolInvocationBegin?.({
-					type: 'chatToolInvocationBegin',
-					invocationId,
-					toolName: name,
-					inputPreview
-				});
-				args.postToolTrace?.(`→ ${name}(${inputPreview})`);
-				const startedAt = Date.now();
-				let resultText = '';
-				let ok = true;
-				try {
-					resultText = await executeToolCall(name, parsedArgs, {
-						abortSignal: args.abortSignal,
-						requestEditsApproval: args.requestEditsApproval,
-						postEditsReview: args.postEditsReview,
-						runSubagent,
-						mcpManager: args.mcpManager,
-						commandTools: args.commandTools,
-						policy: args.policy
-					});
-				} catch (err) {
-					ok = false;
-					resultText = JSON.stringify({ error: true, ...serializeUnknownError(err) }, null, 2);
-				}
-				const durationMs = Date.now() - startedAt;
-				const outputPreview = safeOneLine(resultText, 800);
-				args.postToolInvocationEnd?.({
-					type: 'chatToolInvocationEnd',
-					invocationId,
-					toolName: name,
-					ok,
-					outputPreview,
-					outputFull: truncateForWebview(resultText),
-					durationMs
-				});
-				args.postToolTrace?.(`← ${name}: ${outputPreview}`);
-
-				if (name === 'manage_todo_list') {
-					try {
-						const parsed = JSON.parse(resultText);
-						const todoList = Array.isArray(parsed?.todoList) ? parsed.todoList : [];
-						const note = typeof parsed?.note === 'string' ? parsed.note : undefined;
-						if (todoList.length) {
-							args.postTodoList?.({ type: 'chatTodoList', todoList, note });
-						}
-					} catch {
-						// ignore
-					}
-				}
-
-				args.conversation.push({ role: 'tool', tool_call_id: call.id, content: resultText });
-			}
-		} finally {
-			try {
-				args.abortSignal.removeEventListener('abort', onAbort);
-			} catch {
-				// ignore
-			}
-			d1.dispose();
-		}
 	}
 
 	throw new Error(`Tool loop exceeded max iterations (${args.maxIterations}).`);

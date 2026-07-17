@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseSseStream } from '../../src/copilotDirect/sseParser';
+import { parseSseStream } from '../../src/trilcDirect/sseParser';
 
 function toStream(chunks: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
