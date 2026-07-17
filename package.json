@@ -208,6 +208,32 @@
           "maximum": 65535,
           "description": "Port for the TriLC local daemon HTTP server."
         },
+        "tripilot.trilcDirect.baseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8711",
+          "description": "Base URL for the TriLC Anthropic-compatible API server."
+        },
+        "tripilot.trilcDirect.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API key for TriLC (leave empty when triLC runs with authMode=minimal)."
+        },
+        "tripilot.trilcDirect.authMode": {
+          "type": "string",
+          "enum": ["minimal", "permissive"],
+          "default": "minimal",
+          "description": "Auth mode: minimal = local-only, permissive = accepts external API keys."
+        },
+        "tripilot.trilcDirect.defaultModel": {
+          "type": "string",
+          "default": "",
+          "description": "Default model ID for TriLC chat."
+        },
+        "tripilot.trilcDirect.modelTagDefault": {
+          "type": "string",
+          "default": "",
+          "description": "Default model tag filter for TriLC."
+        },
         "tripilot.askStudySandboxDir": {
           "type": "string",
           "default": ".tripilot/ask-study",

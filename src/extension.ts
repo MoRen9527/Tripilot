@@ -254,7 +254,7 @@ const settingsModelsCache = new Map<string, ModelsCacheEntry>();
 
 function makeSettingsModelsCacheKey(provider: 'trilc-direct'): string {
 	const cfg = vscode.workspace.getConfiguration('tripilot');
-	const baseUrl = String(cfg.get<string>('trilcDirect.baseUrl', '') ?? '').trim();
+	const baseUrl = String(cfg.get<string>('trilcDirect.baseUrl', 'http://127.0.0.1:8711') ?? '').trim();
 	return `trilc-direct:${baseUrl}`;
 }
 
@@ -705,7 +705,7 @@ export function activate(context: vscode.ExtensionContext) {
 			try {
 				const client = new TrilcDirectClient(extensionVersion, editorVersionHeader);
 				const trilcCfg: TrilcClientConfig = {
-					baseUrl: vscode.workspace.getConfiguration('tripilot.trilcDirect').get<string>('baseUrl') || 'http://127.0.0.1:11434',
+					baseUrl: vscode.workspace.getConfiguration('tripilot.trilcDirect').get<string>('baseUrl') || 'http://127.0.0.1:8711',
 					apiKey: vscode.workspace.getConfiguration('tripilot.trilcDirect').get<string>('apiKey') || undefined,
 				};
 				const models = await client.listModels(trilcCfg);
@@ -1877,7 +1877,7 @@ class TripilotSettingsPanel {
 
 	private getTrilcConfig(): TrilcClientConfig {
 		const cfg = vscode.workspace.getConfiguration('tripilot');
-		const baseUrl = String(cfg.get<string>('trilcDirect.baseUrl', 'http://127.0.0.1:19840') ?? '').trim();
+		const baseUrl = String(cfg.get<string>('trilcDirect.baseUrl', 'http://127.0.0.1:8711') ?? '').trim();
 		const apiKey = String(cfg.get<string>('trilcDirect.apiKey', '') ?? '').trim();
 		return {
 			baseUrl,
@@ -3885,7 +3885,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 
 	private getTrilcConfig(): TrilcClientConfig {
 		const cfg = vscode.workspace.getConfiguration('tripilot');
-		const baseUrl = String(cfg.get<string>('trilcDirect.baseUrl', 'http://127.0.0.1:19840') ?? '').trim();
+		const baseUrl = String(cfg.get<string>('trilcDirect.baseUrl', 'http://127.0.0.1:8711') ?? '').trim();
 		const apiKey = String(cfg.get<string>('trilcDirect.apiKey', '') ?? '').trim();
 		return {
 			baseUrl,
