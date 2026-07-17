@@ -8,14 +8,6 @@
 	const refreshEl = $('#refresh');
 	const modelsStatusEl = $('#modelsStatus');
 
-	const copilotDirectAuthToggleEl = $('#copilotDirectAuthToggle');
-	const copilotDirectAuthDetailsEl = $('#copilotDirectAuthDetails');
-	const copilotDirectAuthTextEl = $('#copilotDirectAuthText');
-	const copilotDirectAuthHintEl = $('#copilotDirectAuthHint');
-	const copilotDirectAuthRefreshEl = $('#copilotDirectAuthRefresh');
-	const copilotDirectReloginMinimalEl = $('#copilotDirectReloginMinimal');
-	const copilotDirectReloginPermissiveEl = $('#copilotDirectReloginPermissive');
-	const copilotDirectSignOutEl = $('#copilotDirectSignOut');
 
 	const navEls = $$('.navItem');
 	const pages = $$('.page');
@@ -91,8 +83,6 @@
 	let editsEnableHealing = false;
 	let profileEditsEnableHealingMode = 'inherit';
 	let customAgents = [];
-	let copilotDirectAuthStatus = null;
-	let copilotDirectAuthExpanded = false;
 
 	function renderFollowChatProfile() {
 		if (!followChatProfileEl) return;
@@ -117,58 +107,6 @@
 		profileEditsEnableHealingModeEl.value = profileEditsEnableHealingMode;
 	}
 
-	function setCopilotDirectAuthExpanded(next) {
-		copilotDirectAuthExpanded = !!next;
-		if (copilotDirectAuthDetailsEl) copilotDirectAuthDetailsEl.classList.toggle('hidden', !copilotDirectAuthExpanded);
-		if (copilotDirectAuthToggleEl) copilotDirectAuthToggleEl.textContent = copilotDirectAuthExpanded ? 'Hide' : 'Show';
-	}
-
-	function renderCopilotDirectAuth() {
-		if (!copilotDirectAuthTextEl) return;
-		const s = copilotDirectAuthStatus;
-		if (!s) {
-			copilotDirectAuthTextEl.textContent = 'Unknown';
-			if (copilotDirectAuthHintEl) copilotDirectAuthHintEl.textContent = '';
-			return;
-		}
-
-		const lines = [];
-		lines.push(`authMode: ${s.authMode || ''}`);
-		lines.push(`tokenUrl override: ${s.tokenUrlOverrideEnabled ? 'enabled' : 'disabled'}${s.tokenUrlOverride ? `\n${s.tokenUrlOverride}` : ''}`);
-		lines.push(
-			`preferred: ${
-				s.preferredSource
-					? `${s.preferredSource}${s.preferredAccountLabel ? ` (${s.preferredAccountLabel})` : ''}`
-					: 'none'
-			}`
-		);
-
-		if (s.vscodeAuthAvailable) {
-			const vs = s.vscodeAuthHasSession ? `yes${s.vscodeAuthAccountLabel ? ` (${s.vscodeAuthAccountLabel})` : ''}` : 'no';
-			lines.push(`vscode-auth session: ${vs}`);
-			if (s.vscodeAuthError) lines.push(`vscode-auth err: ${s.vscodeAuthError}`);
-		} else {
-			lines.push('vscode-auth: unavailable');
-		}
-
-		lines.push(
-			`device-flow: ${s.deviceFlowEnabled ? 'enabled' : 'disabled'}` +
-				`\nclientId: ${s.deviceFlowClientIdConfigured ? 'configured' : 'missing'}` +
-				`\ncached: ${s.deviceFlowHasCachedToken ? `yes${s.deviceFlowAccountLabel ? ` (${s.deviceFlowAccountLabel})` : ''}` : 'no'}`
-		);
-
-		copilotDirectAuthTextEl.textContent = lines.join('\n');
-
-		if (copilotDirectAuthHintEl) {
-			let hint = '';
-			if (!s.vscodeAuthAvailable && (!s.deviceFlowEnabled || !s.deviceFlowClientIdConfigured)) {
-				hint = '提示：当前环境缺少 VS Code GitHub 认证；如需使用 device-flow，请配置 tripilot.copilotDirect.deviceFlow.clientId。';
-			} else if (!s.preferredSource) {
-				hint = '尚未登录。可以点击 Clear + Re-login 进行登录。';
-			}
-			copilotDirectAuthHintEl.textContent = hint;
-		}
-	}
 
 	function renderCustomAgents() {
 		if (!customAgentListEl) return;
@@ -612,7 +550,6 @@
 				allModels = Array.isArray(msg.models) ? msg.models : [];
 				enabledIds = new Set(Array.isArray(msg.visibleModelIds) ? msg.visibleModelIds : []);
 				modelsStatus = msg.modelsStatus ?? modelsStatus;
-				copilotDirectAuthStatus = msg.copilotDirectAuthStatus ?? copilotDirectAuthStatus;
 				agentProfiles = Array.isArray(msg.agentProfiles) ? msg.agentProfiles : [];
 				activeAgentProfileId = String(msg.activeAgentProfileId || activeAgentProfileId);
 				followChatProfile = msg.followChatProfile !== undefined ? !!msg.followChatProfile : followChatProfile;
@@ -628,7 +565,6 @@
 				renderSyncChatProfileFromSettings();
 				renderEditsEnableHealing();
 				renderProfileEditsEnableHealingMode();
-				renderCopilotDirectAuth();
 				renderModelsStatus();
 				render();
 				renderBuiltinTools();
@@ -644,7 +580,6 @@
 				allModels = Array.isArray(msg.models) ? msg.models : allModels;
 				enabledIds = new Set(Array.isArray(msg.visibleModelIds) ? msg.visibleModelIds : Array.from(enabledIds));
 				modelsStatus = msg.modelsStatus ?? modelsStatus;
-				copilotDirectAuthStatus = msg.copilotDirectAuthStatus ?? copilotDirectAuthStatus;
 				agentProfiles = Array.isArray(msg.agentProfiles) ? msg.agentProfiles : agentProfiles;
 				activeAgentProfileId = msg.activeAgentProfileId ? String(msg.activeAgentProfileId) : activeAgentProfileId;
 				followChatProfile = msg.followChatProfile !== undefined ? !!msg.followChatProfile : followChatProfile;
@@ -660,7 +595,6 @@
 				renderSyncChatProfileFromSettings();
 				renderEditsEnableHealing();
 				renderProfileEditsEnableHealingMode();
-				renderCopilotDirectAuth();
 				renderModelsStatus();
 				render();
 				renderBuiltinTools();
@@ -679,21 +613,6 @@
 		}
 	});
 
-	copilotDirectAuthToggleEl?.addEventListener('click', () => {
-		setCopilotDirectAuthExpanded(!copilotDirectAuthExpanded);
-	});
-
-	copilotDirectAuthRefreshEl?.addEventListener('click', () => {
-		vscode.postMessage({ type: 'copilotDirectRefreshAuthStatus' });
-	});
-	const relogin = (authMode) => {
-		vscode.postMessage({ type: 'copilotDirectRelogin', authMode });
-	};
-	copilotDirectReloginMinimalEl?.addEventListener('click', () => relogin('minimal'));
-	copilotDirectReloginPermissiveEl?.addEventListener('click', () => relogin('permissive'));
-	copilotDirectSignOutEl?.addEventListener('click', () => {
-		vscode.postMessage({ type: 'copilotDirectSignOut' });
-	});
 
 	searchEl.addEventListener('input', () => render());
 	refreshEl.addEventListener('click', () => vscode.postMessage({ type: 'refreshModels' }));
@@ -819,7 +738,6 @@
 	});
 
 	setPage('models');
-	setCopilotDirectAuthExpanded(false);
 
 	vscode.postMessage({ type: 'webviewReady' });
 })();

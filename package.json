@@ -1,4 +1,4 @@
-{
+﻿{
   "name": "tripilot-chat",
   "displayName": "Tripilot Chat",
   "description": "A Copilot Chat-like sidebar with tool calling via VS Code APIs.",
@@ -14,11 +14,9 @@
   "activationEvents": [
     "onView:tripilot.chatView",
     "onCommand:tripilot.debug.dumpLmModels",
-    "onCommand:tripilot.debug.diagnoseCopilotDirect",
     "onCommand:tripilot.debug.showChatLogView",
     "onCommand:tripilot.debug.searchCommands",
     "onCommand:tripilot.debug.copySettingsPerfLog",
-    "onCommand:tripilot.copilotDirect.signOut",
     "onCommand:tripilot.chat.open",
     "onCommand:tripilot.chat.toggle",
     "onCommand:tripilot.chat.openInEditor",
@@ -32,6 +30,9 @@
     "onCommand:tripilot.chat.selectSession"
   ],
   "main": "./out/extension.js",
+  "bin": {
+    "tripilot": "./out/cli/tripilot-cli.js"
+  },
   "contributes": {
     "commands": [
       {
@@ -39,16 +40,8 @@
         "title": "Tripilot: Debug Dump LM Models"
       },
       {
-        "command": "tripilot.debug.diagnoseCopilotDirect",
-        "title": "Tripilot: Debug Diagnose Copilot Direct"
-      },
-      {
         "command": "tripilot.debug.copySettingsPerfLog",
         "title": "Tripilot: Debug Copy Settings Perf Log"
-      },
-      {
-        "command": "tripilot.copilotDirect.signOut",
-        "title": "Tripilot: Copilot Direct Sign Out"
       },
       {
         "command": "tripilot.debug.showChatLogView",
@@ -166,75 +159,10 @@
         "tripilot.chatProvider": {
           "type": "string",
           "enum": [
-            "vscode-lm",
-            "copilot-direct",
-            "models-direct"
+            "trilc-direct"
           ],
-          "default": "vscode-lm",
-          "description": "Chat backend. vscode-lm uses VS Code Language Model API; copilot-direct uses GitHub auth + Copilot proxy endpoints; models-direct uses a self-hosted OpenAI-compatible server (/v1/models + /v1/chat/completions)."
-        },
-        "tripilot.copilotDirect.authMode": {
-          "type": "string",
-          "enum": [
-            "minimal",
-            "permissive"
-          ],
-          "default": "minimal",
-          "description": "GitHub authentication scopes mode for copilot-direct. If requests fail due to permissions, switch to permissive."
-        },
-        "tripilot.copilotDirect.deviceFlow.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Fallback to GitHub OAuth device flow when VS Code GitHub authentication is unavailable (common in VSCodium or restricted builds)."
-        },
-        "tripilot.copilotDirect.deviceFlow.clientId": {
-          "type": "string",
-          "default": "",
-          "description": "GitHub OAuth App Client ID used for device-flow fallback. Create your own OAuth App on GitHub and paste its Client ID here."
-        },
-        "tripilot.copilotDirect.tokenUrl": {
-          "type": "string",
-          "default": "",
-          "description": "Override the GitHub Copilot token endpoint URL for copilot-direct (advanced / break-glass). Leave empty to use built-in defaults (copilot_internal v2 with fallbacks)."
-        },
-        "tripilot.modelsDirect.baseUrl": {
-          "type": "string",
-          "default": "",
-          "description": "Base URL for models-direct server. Example: http://127.0.0.1:8000 (expects /v1/models and /v1/chat/completions)."
-        },
-        "tripilot.modelsDirect.apiKey": {
-          "type": "string",
-          "default": "",
-          "description": "API key for models-direct server (sent as Authorization: Bearer <apiKey>)."
-        },
-        "tripilot.modelsDirect.defaultModel": {
-          "type": "string",
-          "default": "",
-          "description": "Default model id for models-direct when selected model is Auto or unset."
-        },
-        "tripilot.modelsDirect.modelTagDefault": {
-          "type": "string",
-          "default": "",
-          "description": "Default modelTag to be sent to the models-direct server (if not provided by /v1/models and not overridden per model)."
-        },
-        "tripilot.modelsDirect.modelTags": {
-          "type": "object",
-          "default": {},
-          "description": "Per-model modelTag override map. Keys are model ids, values are tags like Anthropic/Google/Meta/grok/deepseek/glm/qwen.",
-          "additionalProperties": {
-            "type": "string"
-          }
-        },
-        "tripilot.modelsDirect.modelExtras": {
-          "type": "object",
-          "default": {},
-          "description": "Per-model modelExtra override map. Keys are model ids, values are arbitrary JSON objects passed through to the server.",
-          "additionalProperties": true
-        },
-        "tripilot.modelsDirect.extraFieldName": {
-          "type": "string",
-          "default": "tripilot",
-          "description": "Field name used to pass through extra metadata in request body. Tripilot sends { <extraFieldName>: { modelTag, modelExtra } }."
+          "default": "trilc-direct",
+          "description": "Chat backend. trilc-direct connects to the local TriLC daemon for Anthropic-compatible API services. VSCodium must have TriLC running locally."
         },
         "tripilot.maxToolIterations": {
           "type": "number",
