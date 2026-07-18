@@ -33,16 +33,6 @@
   "bin": {
     "tripilot": "./bin/tripilot"
   },
-  "files": [
-    "bin/",
-    "dist/",
-    "out/",
-    "src/",
-    "resources/",
-    "package.json",
-    "tsconfig.json",
-    "README.md"
-  ],
   "contributes": {
     "commands": [
       {

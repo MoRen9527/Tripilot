@@ -24,7 +24,7 @@ TRIMETAVERSE.code-workspace
 .gitignore
 reference/**
 artifacts/**
-media/**
+# media/ contains built webview assets (main.js, main.css, settings.js, settings.css); required at runtime
 .env
 .env.*
 *.vsix
