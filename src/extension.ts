@@ -1567,7 +1567,7 @@ type SettingsOutboundMessage =
 				customAgents?: WorkspaceCustomAgentInfo[];
 				triLcAgents?: TriLCAgent[];
 		  }
-	| { type: 'setPage'; page: 'models' | 'tools' | 'customAgents' | 'agents' }
+	| { type: 'setPage'; page: 'models' | 'tools' | 'agents' }
 	| { type: 'discoveredCommands'; commands: string[] };
 
 type CommandToolConfig = { name: string; command: string; description?: string; enabled: boolean };
