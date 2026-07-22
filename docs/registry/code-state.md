@@ -7,11 +7,22 @@
 - `scripts/`、`deploy/`、`docker/`：辅助脚本和环境资产
 - `artifacts/`、`media/`、`resources/`：静态资产与构建相关内容
 
+### Phase 1 配置平面改造（W30，cpo-trimodel-deployment）
+
+- **`src/TriLCClient.ts`**：★ Phase 1 新增。TriLC HTTP+SSE 客户端，替代旧 `runTrilcDirectRequest()` 模式。协议：`POST /internal/v1/tasks/submit`、`GET /internal/v1/sessions/{id}/stream` (SSE)、`GET /internal/v1/sessions`、`POST /internal/v1/sessions/{id}/cancel`、`POST /internal/v1/sessions/recover`、`GET /internal/v1/agents`、`GET /healthz`。TriPilot 不持有任何 API Key——所有 LLM 调用通过 TriLC。
+- **`media/settings.js`**：★ Phase 1 改造。Settings → Models 页新增：
+  - `defaultModelSelect` 下拉（从 TriLC `/v1/models` 拉取启用模型列表）
+  - `setDefaultModel` 消息 → extension.ts → globalState 持久化
+  - `visibleModelIds` 过滤：仅显示 Settings 中启用的模型
+  - Chat 模型下拉：切换仅影响当前会话，不改变全局默认值
+- **`src/extension.ts`**：★ Phase 1 改造。消息处理新增 `setDefaultModel` case，globalState 读写默认模型 ID
+
 ## Current Code Health
 
 - 当前仓库具备较标准的扩展工程结构。
-- 当前代码健康应按“PC 端软件交互入口层”理解，而不是按运行面或宿主切换层理解。
+- 当前代码健康应按"PC 端软件交互入口层"理解，而不是按运行面或宿主切换层理解。
 - 尚未建立 registry 级代码健康评分或 git 健康摘要。
+- **Phase 1 新增**：TriLCClient 提供完整 HTTP+SSE 通信层，支持任务提交、流式响应、会话管理、健康检查
 
 ## Change Tracking Baseline
 

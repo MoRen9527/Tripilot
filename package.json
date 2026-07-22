@@ -206,7 +206,7 @@
         "tripilot.trilcDirect.apiKey": {
           "type": "string",
           "default": "",
-          "description": "API key for TriLC (leave empty when triLC runs with authMode=minimal)."
+          "description": "DEPRECATED (W30): API key no longer used. TriPilot holds zero API keys — all LLM calls go through TriLC daemon on localhost (CPO Q2 ruling). Kept for backwards compatibility only."
         },
         "tripilot.trilcDirect.authMode": {
           "type": "string",

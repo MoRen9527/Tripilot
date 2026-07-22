@@ -2,6 +2,7 @@
 // Standalone CLI for TriPilot that talks to TriLC via Anthropic-compatible API.
 // Independent of VS Code. Streams SSE responses to stdout. Executes tools locally.
 // CTO-008-P P.1 + TWF-002-5: Tool execution loop with TriCode→opencode integration.
+// W30: tricodeBridge.ts removed; import directly from @trimetaverse/tricode.
 
 import * as http from 'node:http';
 import * as https from 'node:https';
@@ -10,7 +11,7 @@ import * as path from 'node:path';
 import { execFile } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { createInterface } from 'node:readline';
-import { executeCodeTask } from '../tricodeBridge.js';
+import { executeCodeTask } from '@trimetaverse/tricode';
 
 // ── Types ──
 

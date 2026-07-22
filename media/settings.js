@@ -17,6 +17,10 @@
 	const customAgentFileBaseEl = $('#customAgentFileBase');
 	const customAgentCreateEl = $('#customAgentCreate');
 
+	const agentsListEl = $('#agentsList');
+	const agentsRefreshEl = $('#agentsRefresh');
+	const agentsStatusEl = $('#agentsStatus');
+
 	const builtinToolsEl = $('#builtinTools');
 	const commandToolsEl = $('#commandTools');
 	const mcpServersEl = $('#mcpServers');
@@ -51,6 +55,7 @@
 	let allModels = [];
 	let enabledIds = new Set();
 	let modelsStatus = '';
+	let defaultModelId = '';
 		function renderModelsStatus() {
 			if (!modelsStatusEl) return;
 			const text = String(modelsStatus || '').trim();
@@ -77,12 +82,48 @@
 	let mcpServers = [];
 	let discoveredCommands = [];
 	let agentProfiles = [];
-	let activeAgentProfileId = 'agent-vm';
+	let activeAgentProfileId = '';
 	let followChatProfile = true;
 	let syncChatProfileFromSettings = false;
 	let editsEnableHealing = false;
 	let profileEditsEnableHealingMode = 'inherit';
 	let customAgents = [];
+	let triLcAgents = [];
+
+	function renderTriLcAgents() {
+		if (!agentsListEl) return;
+		agentsListEl.innerHTML = '';
+		if (!triLcAgents.length) {
+			const div = document.createElement('div');
+			div.className = 'empty';
+			div.textContent = 'No TriCompany agents. Start TriLC or click Refresh.';
+			agentsListEl.appendChild(div);
+			if (agentsStatusEl) agentsStatusEl.textContent = 'No agents found';
+			return;
+		}
+		if (agentsStatusEl) agentsStatusEl.textContent = `${triLcAgents.length} agents loaded`;
+		for (const a of triLcAgents) {
+			const row = document.createElement('div');
+			row.className = 'row';
+
+			const left = document.createElement('div');
+			const name = document.createElement('div');
+			name.className = 'modelName';
+			name.textContent = a.displayName || a.id;
+			left.appendChild(name);
+
+			const meta = document.createElement('div');
+			meta.className = 'modelMeta';
+			const parts = [a.id];
+			if (a.decisionRights) parts.push(a.decisionRights);
+			if (Array.isArray(a.tools) && a.tools.length) parts.push(`tools: ${a.tools.join(', ')}`);
+			meta.textContent = parts.join(' · ');
+			left.appendChild(meta);
+
+			row.appendChild(left);
+			agentsListEl.appendChild(row);
+		}
+	}
 
 	function renderFollowChatProfile() {
 		if (!followChatProfileEl) return;
@@ -183,9 +224,8 @@
 			agentProfileSelectEl.appendChild(opt);
 		}
 		agentProfileSelectEl.value = activeAgentProfileId;
-		// Only allow removing non-default profiles.
-		const isBuiltin = ['ask-study', 'edit-test', 'agent-vm'].includes(activeAgentProfileId);
-		if (agentProfileRemoveEl) agentProfileRemoveEl.disabled = isBuiltin;
+		// v0.1: all profiles are user-defined; none are built-in
+		if (agentProfileRemoveEl) agentProfileRemoveEl.disabled = !agentProfiles.length;
 	}
 
 	function normalize(s) {
@@ -244,6 +284,47 @@
 			row.appendChild(toggle);
 			listEl.appendChild(row);
 		}
+
+			// ── Default model dropdown ──
+			// Show enabled models only (exclude 'auto')
+			const enabledModels = allModels.filter((m) => enabledIds.has(m.id) && m.id !== 'auto');
+			const selectedDefault = defaultModelId && enabledModels.some((m) => m.id === defaultModelId)
+				? defaultModelId
+				: (enabledModels.length ? enabledModels[0].id : '');
+			const defaultSection = document.createElement('div');
+			defaultSection.className = 'section';
+			const sectionTitle = document.createElement('div');
+			sectionTitle.className = 'sectionTitle';
+			sectionTitle.textContent = '默认模型';
+			defaultSection.appendChild(sectionTitle);
+
+			const selectEl = document.createElement('select');
+			selectEl.id = 'defaultModelSelect';
+			if (!enabledModels.length) {
+				const opt = document.createElement('option');
+				opt.value = '';
+				opt.textContent = '(请先启用模型)';
+				selectEl.appendChild(opt);
+			} else {
+				for (const m of enabledModels) {
+					const opt = document.createElement('option');
+					opt.value = m.id;
+					opt.textContent = m.name;
+					if (m.id === selectedDefault) opt.selected = true;
+					selectEl.appendChild(opt);
+				}
+				selectEl.addEventListener('change', () => {
+					vscode.postMessage({ type: 'setDefaultModel', id: selectEl.value });
+				});
+			}
+			defaultSection.appendChild(selectEl);
+
+			const hint = document.createElement('div');
+			hint.className = 'modelMeta';
+			hint.textContent = '新对话将默认使用此模型。可在 Chat 界面中随时切换。';
+			defaultSection.appendChild(hint);
+
+			listEl.appendChild(defaultSection);
 	}
 
 	function setPage(page) {
@@ -549,7 +630,8 @@
 			case 'init':
 				allModels = Array.isArray(msg.models) ? msg.models : [];
 				enabledIds = new Set(Array.isArray(msg.visibleModelIds) ? msg.visibleModelIds : []);
-				modelsStatus = msg.modelsStatus ?? modelsStatus;
+					defaultModelId = msg.defaultModelId ? String(msg.defaultModelId) : '';
+					modelsStatus = msg.modelsStatus ?? modelsStatus;
 				agentProfiles = Array.isArray(msg.agentProfiles) ? msg.agentProfiles : [];
 				activeAgentProfileId = String(msg.activeAgentProfileId || activeAgentProfileId);
 				followChatProfile = msg.followChatProfile !== undefined ? !!msg.followChatProfile : followChatProfile;
@@ -560,6 +642,7 @@
 				commandTools = Array.isArray(msg.commandTools) ? msg.commandTools : [];
 				mcpServers = Array.isArray(msg.mcpServers) ? msg.mcpServers : [];
 				customAgents = Array.isArray(msg.customAgents) ? msg.customAgents : [];
+				triLcAgents = Array.isArray(msg.triLcAgents) ? msg.triLcAgents : [];
 				renderAgentProfiles();
 				renderFollowChatProfile();
 				renderSyncChatProfileFromSettings();
@@ -572,6 +655,7 @@
 				renderMcpServers();
 				renderCustomAgents();
 				renderDiscoveredCommands();
+				renderTriLcAgents();
 				if (msg.initialPage) {
 					setPage(String(msg.initialPage));
 				}
@@ -579,7 +663,8 @@
 			case 'update':
 				allModels = Array.isArray(msg.models) ? msg.models : allModels;
 				enabledIds = new Set(Array.isArray(msg.visibleModelIds) ? msg.visibleModelIds : Array.from(enabledIds));
-				modelsStatus = msg.modelsStatus ?? modelsStatus;
+					if (msg.defaultModelId !== undefined) defaultModelId = msg.defaultModelId ? String(msg.defaultModelId) : '';
+					modelsStatus = msg.modelsStatus ?? modelsStatus;
 				agentProfiles = Array.isArray(msg.agentProfiles) ? msg.agentProfiles : agentProfiles;
 				activeAgentProfileId = msg.activeAgentProfileId ? String(msg.activeAgentProfileId) : activeAgentProfileId;
 				followChatProfile = msg.followChatProfile !== undefined ? !!msg.followChatProfile : followChatProfile;
@@ -590,6 +675,7 @@
 				commandTools = Array.isArray(msg.commandTools) ? msg.commandTools : commandTools;
 				mcpServers = Array.isArray(msg.mcpServers) ? msg.mcpServers : mcpServers;
 				customAgents = Array.isArray(msg.customAgents) ? msg.customAgents : customAgents;
+				if (msg.triLcAgents !== undefined) triLcAgents = Array.isArray(msg.triLcAgents) ? msg.triLcAgents : triLcAgents;
 				renderAgentProfiles();
 				renderFollowChatProfile();
 				renderSyncChatProfileFromSettings();
@@ -602,6 +688,7 @@
 				renderMcpServers();
 				renderCustomAgents();
 				renderDiscoveredCommands();
+				renderTriLcAgents();
 				return;
 			case 'setPage':
 				setPage(String(msg.page || 'models'));
@@ -610,7 +697,10 @@
 				discoveredCommands = Array.isArray(msg.commands) ? msg.commands : [];
 				renderDiscoveredCommands();
 				return;
-		}
+				case 'setDefaultModel':
+					// Handled by extension.ts — no local action needed
+					return;
+			}
 	});
 
 
@@ -730,6 +820,7 @@
 	mcpRefreshEl?.addEventListener('click', () => vscode.postMessage({ type: 'refreshToolsAndMcp' }));
 
 	customAgentRefreshEl?.addEventListener('click', () => vscode.postMessage({ type: 'refreshCustomAgents' }));
+	agentsRefreshEl?.addEventListener('click', () => vscode.postMessage({ type: 'refreshAgents' }));
 	customAgentCreateEl?.addEventListener('click', () => {
 		const base = String(customAgentFileBaseEl?.value ?? '').trim();
 		if (!base) return;
