@@ -2929,6 +2929,15 @@
         const agents = Array.isArray(msg.agents) ? msg.agents : [];
         if (!agentMenuEl) return;
         agentMenuEl.innerHTML = '';
+        if (!agents.length) {
+          const loading = document.createElement('button');
+          loading.className = 'menuItem muted';
+          loading.setAttribute('role', 'menuitem');
+          loading.textContent = 'TriLC 正在加载，请稍后...';
+          loading.disabled = true;
+          agentMenuEl.appendChild(loading);
+          return;
+        }
         for (const a of agents) {
           if (!a) continue;
           const id = String(a.id ?? '').trim();
