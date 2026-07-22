@@ -3136,18 +3136,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 				items.push({ id: a.id, label: a.displayName, description: a.decisionRights });
 			}
 		}
-
-		// Workspace custom agents (.agent.md)
-		const visibleCustom = this.workspaceCustomAgents.filter((a) => !a.hidden);
-		if (visibleCustom.length) {
-			if (items.length) items.push({ id: '---', label: '---' } as any);
-			for (const a of visibleCustom) {
-				items.push({ id: a.id, label: a.name, description: a.description });
-			}
-		}
-		items.push({ id: '---', label: '---' } as any);
-		items.push({ id: 'configureCustomAgents', label: '配置 Custom Agents…' });
-		this.postAny({ type: 'agents', agents: items, loading: this.tricompanyAgents.length === 0 && visibleCustom.length === 0 });
+		this.postAny({ type: 'agents', agents: items, loading: this.tricompanyAgents.length === 0 });
 	}
 
 	private getWorkspaceCustomAgent(profileId: string): WorkspaceCustomAgentInfo | undefined {

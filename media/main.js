@@ -2270,11 +2270,6 @@
     if (!item || !item.dataset) return;
     const value = item.dataset.value;
     if (!value) return;
-    if (value === 'configureCustomAgents') {
-      uiAction('configureCustomAgents');
-      hideMenus();
-      return;
-    }
     if (agentLabelEl) {
       const labelEl = item.querySelector?.('.menuItemLabel');
       agentLabelEl.textContent = (labelEl?.textContent || item.textContent || 'agent&vm').trim();
