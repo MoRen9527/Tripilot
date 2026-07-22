@@ -1532,7 +1532,7 @@ type SettingsInboundMessage =
 type SettingsOutboundMessage =
 	| {
 				type: 'init';
-				initialPage?: 'models' | 'tools' | 'customAgents' | 'agents';
+				initialPage?: 'models' | 'tools' | 'agents';
 				modelsStatus?: string;
 				models: LmModelInfo[];
 				visibleModelIds: string[];
@@ -1576,7 +1576,7 @@ class TripilotSettingsPanel {
 	public static readonly viewType = 'tripilot.settings';
 	private static current?: TripilotSettingsPanel;
 	private static currentManager?: McpClientManager;
-	private initialPage: 'models' | 'tools' | 'customAgents' | 'agents' = 'models';
+	private initialPage: 'models' | 'tools' | 'agents' = 'models';
 	private activeAgentProfileId: string = getDefaultAgentProfileId();
 	private builtinToolCategoriesCache?: Record<string, string>;
 	private readonly trilcClient: TrilcDirectClient;
@@ -1623,7 +1623,7 @@ class TripilotSettingsPanel {
 		private readonly context: vscode.ExtensionContext,
 		private readonly mcpManager: McpClientManager,
 		private readonly extensionVersion: string,
-		initialPage?: 'models' | 'tools' | 'customAgents' | 'agents'
+		initialPage?: 'models' | 'tools' | 'agents'
 	) {
 		this.initialPage = initialPage ?? 'models';
 		settingsPerfLog(`[settings] open initialPage=${this.initialPage}`);
@@ -1909,7 +1909,7 @@ class TripilotSettingsPanel {
 	public static show(
 		context: vscode.ExtensionContext,
 		mcpManager: McpClientManager,
-		initialPage: 'models' | 'tools' | 'customAgents' | 'agents' = 'models',
+		initialPage: 'models' | 'tools' | 'agents' = 'models',
 		options?: { fromChat?: boolean; agentProfileId?: string }
 	) {
 		const perfEnabled = isSettingsPerfEnabled();
