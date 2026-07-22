@@ -5774,7 +5774,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 					return;
 				}
 			case 'configureCustomAgents': {
-				TripilotSettingsPanel.show(this.context, this.mcpManager, 'customAgents');
+				TripilotSettingsPanel.show(this.context, this.mcpManager, 'agents');
 				return;
 			}
 			case 'requestModels': {
