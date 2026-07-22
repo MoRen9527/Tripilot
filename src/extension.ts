@@ -8,6 +8,7 @@ import * as http from 'node:http';
 import { McpClientManager, makeMcpLmToolName, type McpServerConfig, type McpServerStatus } from './mcpClient';
 import { JsonlChatHistoryStore, type ChatHistoryEvent } from './chatHistory';
 import { TrilcDirectClient, type TrilcClientConfig, type TrilcModelInfo, type TrilcMessage, type TrilcTool, type TrilcContentBlock, type OpenAIChatMessage, type TrilcAutoModelsSession } from './trilcDirect/trilcClient';
+import { TriLCClient, type StreamCallbacks, type SubmitTaskRequest, type TriLCAgent } from './TriLCClient';
 import { applyPatch as applyUnifiedPatch, diffLines, parsePatch } from 'diff';
 
 type WebviewInboundMessage =
@@ -69,7 +70,10 @@ type WebviewOutboundMessage =
 				diffStats?: { filesChanged: number; additions: number; deletions: number };
 				canPreview: boolean;
 	  }
-	| { type: 'editReviewClear'; requestId: string };
+	| { type: 'editReviewClear'; requestId: string }
+	// W30 S5: TriLC daemon status and session list
+	| { type: 'triLcStatus'; status: 'online' | 'offline' | 'fallback'; detail?: string }
+	| { type: 'sessionList'; sessions: Array<{ id: string; title?: string; status: string; progress?: { step: number; totalSteps: number; description: string }; updatedAt: string }> };
 
 function countLinesForDiffStat(value: string): number {
 	if (!value) return 0;
@@ -619,35 +623,9 @@ const OPTIONAL_TOOL_NAMES = new Set([
 	'githubRepo'
 ]);
 
-// Copilot-like tool sets (referencable via #edit / #search).
-// These are NOT tools themselves; they expand into multiple tool names.
-const TOOL_SETS: Record<string, { description: string; tools: string[] }> = {
-	edit: {
-		description: 'Tool set for creating/modifying files (Copilot-like #edit).',
-		tools: ['createDirectory', 'createFile', 'editFiles', 'editNotebook', 'newJupyterNotebook']
-	},
-	search: {
-		description: 'Tool set for reading/searching workspace context (Copilot-like #search).',
-		tools: ['readFile', 'listDirectory', 'fileSearch', 'textSearch', 'searchResults', 'codebase', 'usages', 'changes', 'problems']
-	}
-};
-const TOOL_SET_NAMES = new Set(Object.keys(TOOL_SETS));
+/* v0.1 removed: TOOL_SETS */
 
-// ask&study is a read-only mode: only allow learning/inspection tools.
-// Keep this list intentionally small; we can expand later.
-// New policy: ask&study uses a sandbox directory for write/apply/exec.
-// Command tools + MCP remain limited to a hardcoded "learning" allowlist.
-const ASK_STUDY_ALLOWED_COMMAND_TOOL_NAMES = new Set<string>([
-	// e.g. 'explainSelection'
-]);
-
-const ASK_STUDY_ALLOWED_MCP_SERVER_IDS = new Set<string>([
-	// e.g. 'docs'
-]);
-
-const ASK_STUDY_ALLOWED_VSCODE_COMMAND_IDS = new Set<string>([
-	// keep empty by default; vscode_executeCommand is powerful
-]);
+/* v0.1 removed: ASK_STUDY_ALLOWED_* */
 
 // Conversation is stored as vscode.lm messages (LanguageModelChatMessage).
 
@@ -962,17 +940,38 @@ export function activate(context: vscode.ExtensionContext) {
 			if (!autoStart) return;
 
 			const port = cfg.get<number>('triLC.port', 8711);
-			const trilcCmd = process.env.TRILC_BIN || 'trilc';
-
-			const child = spawn(trilcCmd, ['start', '--port', String(port)], {
+			const control = await resolveTriLCControlCommand();
+			const child = spawn(control.command, [...control.prefixArgs, 'start', '--port', String(port)], {
 				detached: true,
 				stdio: 'ignore',
-				shell: process.platform === 'win32'
+				shell: control.shell,
+				env: control.env
 			});
-			triLCPid = child.pid ?? undefined;
-			child.unref();
+			triLCAutoStartControl = { ...control, port };
+			debugChannel.appendLine(`[TriLC] auto-start requested via ${control.source} on port ${port}`);
+			child.once('error', (error) => {
+				triLCAutoStartControl = undefined;
+				debugChannel.appendLine(`[TriLC] auto-start failed via ${control.source}: ${error.message}`);
+			});
+			child.once('exit', async (code, signal) => {
+				if (code !== 0) {
+					triLCAutoStartControl = undefined;
+					debugChannel.appendLine(
+						`[TriLC] auto-start command exited code=${code ?? 'null'} signal=${signal ?? 'none'} via ${control.source}`
+					);
+					return;
+				}
 
-			debugChannel.appendLine(`[TriLC] auto-started on port ${port} (PID ${triLCPid ?? '?'})`);
+				const client = new TriLCClient({ baseUrl: `http://127.0.0.1:${port}` });
+				triLCAutoStarted = await client.checkHealth(3000);
+				if (triLCAutoStarted) {
+					debugChannel.appendLine(`[TriLC] auto-started via ${control.source} on port ${port}`);
+				} else {
+					triLCAutoStartControl = undefined;
+					debugChannel.appendLine(`[TriLC] auto-start command completed but health check failed on port ${port}`);
+				}
+			});
+			child.unref();
 		} catch (e) {
 			debugChannel.appendLine(`[TriLC] auto-start failed: ${e instanceof Error ? e.message : String(e)}`);
 		}
@@ -1274,15 +1273,103 @@ function invalidateWorkspaceCustomAgentsCache(): void {
 	workspaceCustomAgentsCache = undefined;
 }
 
-let triLCPid: number | undefined;
+type TriLCControlCommand = {
+	command: string;
+	prefixArgs: string[];
+	shell: boolean;
+	env: NodeJS.ProcessEnv;
+	source: string;
+};
+
+let triLCAutoStartControl: (TriLCControlCommand & { port: number }) | undefined;
+let triLCAutoStarted = false;
+
+async function resolveTriLCControlCommand(): Promise<TriLCControlCommand> {
+	const env: NodeJS.ProcessEnv = { ...process.env };
+	const triCompanyFolder = vscode.workspace.workspaceFolders?.find((folder) => folder.name.toLowerCase() === 'tricompany');
+	if (!env.TRICOMPANY_SOURCE_PATH && triCompanyFolder) {
+		env.TRICOMPANY_SOURCE_PATH = vscode.Uri.joinPath(triCompanyFolder.uri, '.github', 'source-agents').fsPath;
+	}
+	const bundledTriLCRoot = vscode.Uri.joinPath(vscode.Uri.file(vscode.env.appRoot), 'tools', 'trilc');
+	if (!env.TRICOMPANY_SOURCE_PATH) {
+		const bundledContracts = vscode.Uri.joinPath(bundledTriLCRoot, 'contracts');
+		try {
+			const stat = await vscode.workspace.fs.stat(bundledContracts);
+			if ((stat.type & vscode.FileType.Directory) !== 0) {
+				env.TRICOMPANY_SOURCE_PATH = bundledContracts.fsPath;
+			}
+		} catch {
+			// The stock VS Code host does not include TriCade runtime contracts.
+		}
+	}
+
+	const configuredBin = String(process.env.TRILC_BIN ?? '').trim();
+	if (configuredBin) {
+		return {
+			command: configuredBin,
+			prefixArgs: [],
+			shell: process.platform === 'win32',
+			env,
+			source: 'TRILC_BIN'
+		};
+	}
+
+	const bundledCli = vscode.Uri.joinPath(bundledTriLCRoot, 'dist', 'cli.js');
+	try {
+		const stat = await vscode.workspace.fs.stat(bundledCli);
+		if ((stat.type & vscode.FileType.File) !== 0) {
+			return {
+				command: process.execPath,
+				prefixArgs: [bundledCli.fsPath],
+				shell: false,
+				env: { ...env, ELECTRON_RUN_AS_NODE: '1' },
+				source: bundledCli.fsPath
+			};
+		}
+	} catch {
+		// Fall through to a development workspace or PATH-installed CLI.
+	}
+
+	const workspaceFolder = vscode.workspace.workspaceFolders?.find((folder) => folder.name.toLowerCase() === 'trilc');
+	if (workspaceFolder) {
+		const cliUri = vscode.Uri.joinPath(workspaceFolder.uri, 'dist', 'cli.js');
+		try {
+			const stat = await vscode.workspace.fs.stat(cliUri);
+			if ((stat.type & vscode.FileType.File) !== 0) {
+				return {
+					command: process.execPath,
+					prefixArgs: [cliUri.fsPath],
+					shell: false,
+					env: { ...env, ELECTRON_RUN_AS_NODE: '1' },
+					source: cliUri.fsPath
+				};
+			}
+		} catch {
+			// Fall back to a PATH-installed CLI when the workspace has not been built yet.
+		}
+	}
+
+	return {
+		command: 'trilc',
+		prefixArgs: [],
+		shell: process.platform === 'win32',
+		env,
+		source: 'PATH'
+	};
+}
 
 export function deactivate() {
 	// TriLC cleanup: attempt to stop the auto-started daemon
-	if (triLCPid !== undefined) {
+	if (triLCAutoStarted && triLCAutoStartControl) {
 		try {
-			const { execFile } = require('node:child_process');
-			const trilcCmd = process.env.TRILC_BIN || 'trilc';
-			execFile(trilcCmd, ['stop'], { timeout: 5000, windowsHide: true }, () => {});
+			const control = triLCAutoStartControl;
+			const child = spawn(control.command, [...control.prefixArgs, 'stop', '--port', String(control.port)], {
+				detached: true,
+				stdio: 'ignore',
+				shell: control.shell,
+				env: control.env
+			});
+			child.unref();
 		} catch {
 			// best-effort
 		}
@@ -1315,25 +1402,12 @@ type AgentProfileConfig = {
 	editsEnableHealing?: boolean;
 };
 
-const DEFAULT_AGENT_PROFILES: AgentProfileConfig[] = [
-	{
-		id: 'ask-study',
-		name: 'ask&study',
-		// In ask&study we rely on sandbox enforcement rather than a small builtin whitelist.
-		// Command tools + MCP remain restricted by allowlists at runtime.
-		enabledCommandTools: [],
-		enabledMcpServers: []
-	},
-	{ id: 'edit-test', name: 'edit&test' },
-	{ id: 'agent-vm', name: 'agent&vm' },
-	{
-		id: 'agent-deploy',
-		name: 'agent&deploy'
-	}
-];
+/* v0.1 removed: DEFAULT_AGENT_PROFILES — agents now come from TriLC */
+const DEFAULT_AGENT_PROFILES: AgentProfileConfig[] = [];
 
+/* v0.1: no hardcoded default; first TriLC agent will be used */
 function getDefaultAgentProfileId(): string {
-	return 'agent-vm';
+	return '';
 }
 
 function readAgentProfilesFromConfig(): AgentProfileConfig[] {
@@ -1359,21 +1433,18 @@ async function writeAgentProfilesToConfig(next: AgentProfileConfig[]) {
 function getAgentProfilesMerged(): AgentProfileConfig[] {
 	const custom = readAgentProfilesFromConfig();
 	const byId = new Map<string, AgentProfileConfig>();
-	for (const p of DEFAULT_AGENT_PROFILES) byId.set(p.id, { ...p });
+	/* v0.1: DEFAULT_AGENT_PROFILES is empty; profiles only from user config */
 	for (const p of custom) {
-		const base = byId.get(p.id);
-		byId.set(p.id, base ? { ...base, ...p } : { ...p });
+		byId.set(p.id, { ...p });
 	}
 	return Array.from(byId.values());
 }
 
 function getAgentProfileMerged(id: string): AgentProfileConfig {
 	const normalized = String(id || '').trim() || getDefaultAgentProfileId();
-	return (
-		getAgentProfilesMerged().find((p) => p.id === normalized) ??
-		DEFAULT_AGENT_PROFILES.find((p) => p.id === 'agent-vm') ??
-		DEFAULT_AGENT_PROFILES[0]
-	);
+	/* v0.1: no hardcoded defaults; return from user config or fallback */
+	const found = getAgentProfilesMerged().find((p) => p.id === normalized);
+	return found ?? { id: normalized, name: normalized };
 }
 
 async function upsertAgentProfile(profile: AgentProfileConfig): Promise<void> {
@@ -1396,8 +1467,7 @@ async function upsertAgentProfile(profile: AgentProfileConfig): Promise<void> {
 async function removeAgentProfile(profileId: string): Promise<void> {
 	const id = String(profileId ?? '').trim();
 	if (!id) return;
-	// Protect built-in profiles.
-	if (DEFAULT_AGENT_PROFILES.some((p) => p.id === id)) return;
+	/* v0.1: no built-in profiles to protect */
 	const current = readAgentProfilesFromConfig();
 	await writeAgentProfilesToConfig(current.filter((p) => p.id !== id));
 }
@@ -1437,6 +1507,7 @@ type SettingsInboundMessage =
 	| { type: 'toggleModel'; id: string; enabled: boolean }
 	| { type: 'refreshToolsAndMcp' }
 	| { type: 'refreshCustomAgents' }
+	| { type: 'refreshAgents' }
 	| { type: 'setFollowChatProfile'; enabled: boolean }
 	| { type: 'setSyncChatProfileFromSettings'; enabled: boolean }
 	| { type: 'setEditsEnableHealing'; enabled: boolean }
@@ -1455,16 +1526,18 @@ type SettingsInboundMessage =
 	| { type: 'setCommandToolEnabled'; name: string; enabled: boolean }
 	| { type: 'upsertMcpServer'; server: McpServerConfig }
 	| { type: 'removeMcpServer'; id: string }
-	| { type: 'setMcpServerEnabled'; id: string; enabled: boolean };
+	| { type: 'setMcpServerEnabled'; id: string; enabled: boolean }
+	| { type: 'setDefaultModel'; id: string };
 
 type SettingsOutboundMessage =
 	| {
 				type: 'init';
-				initialPage?: 'models' | 'tools' | 'customAgents';
+				initialPage?: 'models' | 'tools' | 'customAgents' | 'agents';
 				modelsStatus?: string;
 				models: LmModelInfo[];
 				visibleModelIds: string[];
-				editsEnableHealing?: boolean;
+							defaultModelId?: string;
+							editsEnableHealing?: boolean;
 				agentProfiles: AgentProfileConfig[];
 				activeAgentProfileId: string;
 				followChatProfile?: boolean;
@@ -1474,13 +1547,15 @@ type SettingsOutboundMessage =
 				commandTools: CommandToolConfig[];
 				mcpServers: McpServerStatus[];
 				customAgents: WorkspaceCustomAgentInfo[];
+				triLcAgents?: TriLCAgent[];
 		  }
 	| {
 				type: 'update';
 				modelsStatus?: string;
 				models?: LmModelInfo[];
 				visibleModelIds?: string[];
-				editsEnableHealing?: boolean;
+							defaultModelId?: string;
+							editsEnableHealing?: boolean;
 				agentProfiles?: AgentProfileConfig[];
 				activeAgentProfileId?: string;
 				followChatProfile?: boolean;
@@ -1490,8 +1565,9 @@ type SettingsOutboundMessage =
 				commandTools?: CommandToolConfig[];
 				mcpServers?: McpServerStatus[];
 				customAgents?: WorkspaceCustomAgentInfo[];
+				triLcAgents?: TriLCAgent[];
 		  }
-	| { type: 'setPage'; page: 'models' | 'tools' | 'customAgents' }
+	| { type: 'setPage'; page: 'models' | 'tools' | 'customAgents' | 'agents' }
 	| { type: 'discoveredCommands'; commands: string[] };
 
 type CommandToolConfig = { name: string; command: string; description?: string; enabled: boolean };
@@ -1500,10 +1576,12 @@ class TripilotSettingsPanel {
 	public static readonly viewType = 'tripilot.settings';
 	private static current?: TripilotSettingsPanel;
 	private static currentManager?: McpClientManager;
-	private initialPage: 'models' | 'tools' | 'customAgents' = 'models';
+	private initialPage: 'models' | 'tools' | 'customAgents' | 'agents' = 'models';
 	private activeAgentProfileId: string = getDefaultAgentProfileId();
 	private builtinToolCategoriesCache?: Record<string, string>;
 	private readonly trilcClient: TrilcDirectClient;
+	private readonly triLcClient: TriLCClient;
+	private tricompanyAgents: TriLCAgent[] = [];
 	private readonly openedAtMs = Date.now();
 	private perfSeq = 0;
 
@@ -1545,7 +1623,7 @@ class TripilotSettingsPanel {
 		private readonly context: vscode.ExtensionContext,
 		private readonly mcpManager: McpClientManager,
 		private readonly extensionVersion: string,
-		initialPage?: 'models' | 'tools' | 'customAgents'
+		initialPage?: 'models' | 'tools' | 'customAgents' | 'agents'
 	) {
 		this.initialPage = initialPage ?? 'models';
 		settingsPerfLog(`[settings] open initialPage=${this.initialPage}`);
@@ -1557,6 +1635,8 @@ class TripilotSettingsPanel {
 			}
 		}
 		this.trilcClient = new TrilcDirectClient(this.extensionVersion, `vscode/${vscode.version}`);
+		const triLcBaseUrl = vscode.workspace.getConfiguration('tripilot').get<string>('trilcDirect.baseUrl', 'http://127.0.0.1:8711') ?? 'http://127.0.0.1:8711';
+		this.triLcClient = new TriLCClient({ baseUrl: triLcBaseUrl });
 
 		this.panel.onDidDispose(() => {
 			if (TripilotSettingsPanel.current === this) {
@@ -1574,7 +1654,8 @@ class TripilotSettingsPanel {
 				case 'webviewReady':
 					settingsPerfLog(`[settings] webviewReady +${Date.now() - this.openedAtMs}ms`);
 					await this.refreshAndPost(true);
-					return;
+						void this.fetchAndPostAgents();
+						return;
 				case 'refreshModels':
 					clearSettingsModelsCache();
 					await this.refreshAndPost(false);
@@ -1582,6 +1663,14 @@ class TripilotSettingsPanel {
 				case 'toggleModel':
 					await this.toggleModel(msg.id, msg.enabled);
 					return;
+					case 'setDefaultModel': {
+						const id = String(msg.id ?? '').trim();
+						if (id) {
+							await this.context.globalState.update('tripilot.defaultModelId', id);
+							this.post({ type: 'update', defaultModelId: id });
+						}
+						return;
+					}
 				case 'refreshToolsAndMcp':
 					await this.mcpManager.refresh(this.getEffectiveMcpServersConfig(this.activeAgentProfileId));
 					await this.refreshAndPost(false);
@@ -1589,6 +1678,9 @@ class TripilotSettingsPanel {
 				case 'refreshCustomAgents':
 					await this.refreshAndPost(false);
 					return;
+					case 'refreshAgents':
+						await this.fetchAndPostAgents();
+						return;
 				case 'setFollowChatProfile': {
 					const enabled = !!msg.enabled;
 					await this.context.globalState.update(TripilotSettingsPanel.FOLLOW_CHAT_PROFILE_KEY, enabled);
@@ -1803,11 +1895,21 @@ class TripilotSettingsPanel {
 		}
 	}
 
+	private async fetchAndPostAgents(): Promise<void> {
+		try {
+			const agents = await this.triLcClient.listAgents();
+			if (agents.length) this.tricompanyAgents = agents;
+		} catch {
+			// TriLC not available — keep current list
+		}
+		this.post({ type: 'update', triLcAgents: this.tricompanyAgents });
+	}
+
 
 	public static show(
 		context: vscode.ExtensionContext,
 		mcpManager: McpClientManager,
-		initialPage: 'models' | 'tools' | 'customAgents' = 'models',
+		initialPage: 'models' | 'tools' | 'customAgents' | 'agents' = 'models',
 		options?: { fromChat?: boolean; agentProfileId?: string }
 	) {
 		const perfEnabled = isSettingsPerfEnabled();
@@ -1968,6 +2070,7 @@ class TripilotSettingsPanel {
 		}
 
 		const visibleModelIds = this.getVisibleModelIds();
+		const defaultModelId = this.context.globalState.get<string>('tripilot.defaultModelId') ?? '';
 		const modelsPromise = this.timePromise('getAllModelsForSettings', this.getAllModelsForSettings());
 		const agentProfiles = getAgentProfilesMerged();
 		const activeAgentProfileId = this.activeAgentProfileId;
@@ -1994,6 +2097,7 @@ class TripilotSettingsPanel {
 				modelsStatus: `${this.getChatProvider()} · loading…`,
 				models,
 				visibleModelIds,
+				defaultModelId,
 				editsEnableHealing,
 				agentProfiles,
 				activeAgentProfileId,
@@ -2005,8 +2109,9 @@ class TripilotSettingsPanel {
 				commandTools,
 				mcpServers,
 				// Custom agents page will fill these in shortly.
-				customAgents: []
-			});
+					customAgents: [],
+					triLcAgents: this.tricompanyAgents
+				});
 			if (isSettingsPerfEnabled()) {
 				settingsPerfLog(`[settings#${refreshId}] init posted total=${Date.now() - refreshStart}ms ${this.perfPrefix()}`);
 			}
@@ -2056,6 +2161,7 @@ class TripilotSettingsPanel {
 					modelsStatus,
 						models,
 						visibleModelIds,
+						defaultModelId,
 						editsEnableHealing,
 						agentProfiles,
 						activeAgentProfileId,
@@ -2065,23 +2171,26 @@ class TripilotSettingsPanel {
 						builtinToolCategories,
 						commandTools,
 						mcpServers,
-						customAgents
-					}
+				  	customAgents,
+				  	triLcAgents: this.tricompanyAgents
+				  }
 				: {
-						type: 'update',
-						modelsStatus,
-						models,
-						visibleModelIds,
-						editsEnableHealing,
-						agentProfiles,
-						activeAgentProfileId,
-					followChatProfile,
-						syncChatProfileFromSettings,
-						builtinTools,
-						builtinToolCategories,
-						commandTools,
-						mcpServers,
-						customAgents
+				  	type: 'update',
+				  	modelsStatus,
+				  	models,
+				  	visibleModelIds,
+				  	defaultModelId,
+				  	editsEnableHealing,
+				  	agentProfiles,
+				  	activeAgentProfileId,
+				  followChatProfile,
+				  	syncChatProfileFromSettings,
+				  	builtinTools,
+				  	builtinToolCategories,
+				  	commandTools,
+				  	mcpServers,
+				  	customAgents,
+				  	triLcAgents: this.tricompanyAgents
 				  }
 		);
 			if (isSettingsPerfEnabled()) {
@@ -2233,14 +2342,7 @@ class TripilotSettingsPanel {
 		await this.setCommandTools(filtered);
 		// Enable for current active profile.
 		const profile = getAgentProfileMerged(this.activeAgentProfileId);
-		if (profile.id === 'ask-study' && !ASK_STUDY_ALLOWED_COMMAND_TOOL_NAMES.has(nextTool.name)) {
-			this.post({
-				type: 'update',
-				commandTools: this.getCommandTools(this.activeAgentProfileId),
-				agentProfiles: getAgentProfilesMerged()
-			});
-			return;
-		}
+		/* v0.1 removed: ask-study check */
 		const set = new Set(profile.enabledCommandTools ?? []);
 		set.add(nextTool.name);
 		await upsertAgentProfile({ ...profile, enabledCommandTools: Array.from(set) });
@@ -2265,7 +2367,7 @@ class TripilotSettingsPanel {
 	private async setCommandToolEnabled(name: string, enabled: boolean) {
 		const toolName = String(name);
 		const profile = getAgentProfileMerged(this.activeAgentProfileId);
-		if (profile.id === 'ask-study' && enabled && !ASK_STUDY_ALLOWED_COMMAND_TOOL_NAMES.has(toolName)) return;
+		/* v0.1 removed: ask-study check */
 		const set = new Set(profile.enabledCommandTools ?? []);
 		if (enabled) set.add(toolName);
 		else set.delete(toolName);
@@ -2324,12 +2426,7 @@ class TripilotSettingsPanel {
 		await this.setMcpServers(filtered as any);
 		// Enable for current active profile.
 		const profile = getAgentProfileMerged(this.activeAgentProfileId);
-		if (profile.id === 'ask-study' && !ASK_STUDY_ALLOWED_MCP_SERVER_IDS.has(nextServer.id)) {
-			const cfgs = this.getEffectiveMcpServersConfig(this.activeAgentProfileId);
-			await this.mcpManager.refresh(cfgs);
-			this.post({ type: 'update', mcpServers: this.mcpManager.getStatuses(cfgs), agentProfiles: getAgentProfilesMerged() });
-			return;
-		}
+		/* v0.1 removed: ask-study MCP check */
 		const set = new Set(profile.enabledMcpServers ?? []);
 		set.add(nextServer.id);
 		await upsertAgentProfile({ ...profile, enabledMcpServers: Array.from(set) });
@@ -2359,7 +2456,7 @@ class TripilotSettingsPanel {
 	private async setMcpServerEnabled(id: string, enabled: boolean) {
 		const serverId = String(id);
 		const profile = getAgentProfileMerged(this.activeAgentProfileId);
-		if (profile.id === 'ask-study' && enabled && !ASK_STUDY_ALLOWED_MCP_SERVER_IDS.has(serverId)) return;
+		/* v0.1 removed: ask-study MCP check */
 		const set = new Set(profile.enabledMcpServers ?? []);
 		if (enabled) set.add(serverId);
 		else set.delete(serverId);
@@ -2444,6 +2541,10 @@ class TripilotSettingsPanel {
 				<span class="codicon codicon-symbol-property"></span>
 				<span>Models</span>
 			</button>
+			<button class="navItem" data-page="agents">
+				<span class="codicon codicon-organization"></span>
+				<span>Agents</span>
+			</button>
 			<button class="navItem" data-page="customAgents">
 				<span class="codicon codicon-person"></span>
 				<span>Custom Agents</span>
@@ -2468,6 +2569,24 @@ class TripilotSettingsPanel {
 					</button>
 				</div>
 				<div id="modelList" class="list"></div>
+			</section>
+			<section class="page hidden" data-page="agents">
+				<div class="header">
+					<h1 class="h1">TriCompany Agents</h1>
+				</div>
+				<div class="section">
+					<div class="modelMeta">
+						来自 TriLC 服务端的 TriCompany 角色定义。每个 agent 包含 <code>displayName</code>、<code>decisionRights</code> 和 <code>tools</code> 信息。<br />
+						点击 <b>Refresh</b> 从 TriLC 重新拉取最新列表。
+					</div>
+					<div style="margin-top: 10px;">
+						<button id="agentsRefresh" class="iconButton" title="Refresh from TriLC">
+							<span class="codicon codicon-refresh"></span>
+						</button>
+						<span id="agentsStatus" class="modelMeta" style="margin-left: 8px;"></span>
+					</div>
+					<div id="agentsList" class="list"></div>
+				</div>
 			</section>
 			<section class="page hidden" data-page="customAgents">
 				<div class="header">
@@ -2649,6 +2768,10 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 	private readonly extensionVersion: string;
 	private readonly editorVersionHeader: string;
 	private readonly trilcClient: TrilcDirectClient;
+	private readonly triLcClient: TriLCClient;
+	private tricompanyAgents: TriLCAgent[] = [];
+	private tricompanyAgentSystemPrompts = new Map<string, string>();
+	private tricompanyAgentsFetchInFlight?: Promise<void>;
 	private workspaceCustomAgentsLoaded = false;
 	private workspaceCustomAgents: WorkspaceCustomAgentInfo[] = [];
 	private workspaceCustomAgentById = new Map<string, WorkspaceCustomAgentInfo>();
@@ -2754,7 +2877,10 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		this.extensionVersion = String(extensionVersion || '0.0.0');
 		this.editorVersionHeader = String(editorVersionHeader || `vscode/${vscode.version}`);
 		this.trilcClient = new TrilcDirectClient(this.extensionVersion, this.editorVersionHeader);
-		this.selectedModelId = this.context.globalState.get<string>('tripilot.selectedModelId');
+		const triLcBaseUrl = vscode.workspace.getConfiguration('tripilot').get<string>('trilcDirect.baseUrl', 'http://127.0.0.1:8711') ?? 'http://127.0.0.1:8711';
+		this.triLcClient = new TriLCClient({ baseUrl: triLcBaseUrl });
+		this.selectedModelId = this.context.globalState.get<string>('tripilot.selectedModelId')
+			?? this.context.globalState.get<string>('tripilot.defaultModelId');
 		this.selectedAgentProfileId =
 			this.context.globalState.get<string>('tripilot.selectedAgentProfileId') ?? getDefaultAgentProfileId();
 		this.enabledTools = new Set(Array.from(OPTIONAL_TOOL_NAMES));
@@ -2828,6 +2954,37 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		this.lastTrilcModels = [];
 		this.lastTrilcAutoDiscount = undefined;
 		this.trilcAutoPrefetchInFlight = undefined;
+	}
+
+	// W30 S5: TriLC daemon health check + auto-reconnect to active sessions.
+	// Called on webviewReady to post status indicator and session list to UI.
+	private async checkTriLCStatusAndReconnect(state: ChatHostState): Promise<void> {
+		try {
+			const online = await this.triLcClient.checkHealth(3000);
+			if (!online) {
+				this.postToHost(state, { type: 'triLcStatus', status: 'offline', detail: 'TriLC daemon not reachable' });
+				return;
+			}
+
+			this.postToHost(state, { type: 'triLcStatus', status: 'online', detail: 'Connected to TriLC' });
+
+			// Fetch active sessions for auto-reconnect awareness
+			const sessionList = await this.triLcClient.listSessions('running', 10);
+			if (sessionList.sessions && sessionList.sessions.length > 0) {
+				this.postToHost(state, {
+					type: 'sessionList',
+					sessions: sessionList.sessions.map(s => ({
+						id: s.id,
+						title: s.title,
+						status: s.status,
+						progress: s.progress,
+						updatedAt: s.updatedAt,
+					})),
+				});
+			}
+		} catch {
+			this.postToHost(state, { type: 'triLcStatus', status: 'offline', detail: 'TriLC check failed' });
+		}
 	}
 
 	private buildTrilcDirectLmModels(): { models: LmModelInfo[]; selectedModelId?: string } {
@@ -2971,14 +3128,19 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private postAgentsList(): void {
-		const profiles = getAgentProfilesMerged();
-		const items: Array<{ id: string; label: string; description?: string }> = profiles.map((p) => ({
-			id: p.id,
-			label: p.name
-		}));
+		const items: Array<{ id: string; label: string; description?: string }> = [];
+
+		// TriCompany agents from TriLC (primary source)
+		if (this.tricompanyAgents.length) {
+			for (const a of this.tricompanyAgents) {
+				items.push({ id: a.id, label: a.displayName, description: a.decisionRights });
+			}
+		}
+
+		// Workspace custom agents (.agent.md)
 		const visibleCustom = this.workspaceCustomAgents.filter((a) => !a.hidden);
 		if (visibleCustom.length) {
-			items.push({ id: '---', label: '---' } as any);
+			if (items.length) items.push({ id: '---', label: '---' } as any);
 			for (const a of visibleCustom) {
 				items.push({ id: a.id, label: a.name, description: a.description });
 			}
@@ -2990,6 +3152,34 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 
 	private getWorkspaceCustomAgent(profileId: string): WorkspaceCustomAgentInfo | undefined {
 		return this.workspaceCustomAgentById.get(String(profileId ?? '').trim());
+	}
+
+	private async fetchAgentsFromTriLC(): Promise<void> {
+		if (this.tricompanyAgentsFetchInFlight) return this.tricompanyAgentsFetchInFlight;
+		this.tricompanyAgentsFetchInFlight = (async () => {
+			try {
+				const agents = await this.triLcClient.listAgents();
+				if (agents.length) {
+					this.tricompanyAgents = agents;
+					// Prefetch system prompts for all agents
+					for (const a of agents) {
+						try {
+							const prompt = await this.triLcClient.getAgentSystemPrompt(a.id);
+							if (prompt) this.tricompanyAgentSystemPrompts.set(a.id, prompt);
+						} catch { /* best-effort */ }
+					}
+				}
+			} catch {
+				// TriLC not available — keep empty list
+			} finally {
+				this.tricompanyAgentsFetchInFlight = undefined;
+			}
+		})();
+		return this.tricompanyAgentsFetchInFlight;
+	}
+
+	private getTriLCAgentSystemPrompt(agentId: string): string | undefined {
+		return this.tricompanyAgentSystemPrompts.get(String(agentId ?? '').trim());
 	}
 
 	private mapCustomAgentToolsToOptionalBuiltinTools(toolSpecs: string[] | undefined): Set<string> {
@@ -3008,14 +3198,17 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			// Minimal compatibility with VS Code Copilot custom agent tool sets.
 			// Copilot-style custom agents typically specify coarse tool *sets* like: edit/search/terminal/diagnostics.
 			// Tripilot only exposes the Copilot tool surface (OPTIONAL_TOOL_NAMES), so map those sets to our tool sets.
-			if (t === 'search') {
-				for (const n of TOOL_SETS.search.tools) enabled.add(n);
-				continue;
-			}
-			if (t === 'edit') {
-				for (const n of TOOL_SETS.edit.tools) enabled.add(n);
-				continue;
-			}
+				/* v0.1: inline TOOL_SETS */
+				const TOOL_SET_EDIT = ['createDirectory', 'createFile', 'editFiles', 'editNotebook', 'newJupyterNotebook'];
+				const TOOL_SET_SEARCH = ['readFile', 'listDirectory', 'fileSearch', 'textSearch', 'searchResults', 'codebase', 'usages', 'changes', 'problems'];
+				if (t === 'search') {
+					for (const n of TOOL_SET_SEARCH) enabled.add(n);
+					continue;
+				}
+				if (t === 'edit') {
+					for (const n of TOOL_SET_EDIT) enabled.add(n);
+					continue;
+				}
 			if (t === 'terminal') {
 				enabled.add('runInTerminal');
 				enabled.add('getTerminalOutput');
@@ -3033,8 +3226,8 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 	private getEffectiveAgentProfile(profileId: string): AgentProfileConfig {
 		const agent = this.getWorkspaceCustomAgent(profileId);
 		if (!agent) return getAgentProfileMerged(profileId);
-		// Start from agent-vm defaults and override based on agent file.
-		const base = getAgentProfileMerged('agent-vm');
+		// v0.1: generic base config (no more agent-vm default)
+		const base: AgentProfileConfig = { id: profileId, name: profileId };
 		const enabledBuiltin = Array.from(this.mapCustomAgentToolsToOptionalBuiltinTools(agent.tools));
 		// Command tools and MCP servers: only enable those explicitly referenced.
 		const enabledCommandTools: string[] = [];
@@ -3926,17 +4119,28 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 
 	private buildSystemInstructionForProfile(profileId: string): string {
 		const custom = this.getWorkspaceCustomAgent(profileId);
+		/* v0.1: simplified base — agent-specific prompts come from TriLC */
 		const base = [
 			'(Tripilot System)',
 			'You are Tripilot (小T), a learning assistant running inside TriMetaverse(三元宇宙).',
-			'Always refer to yourself as 小T in all replies, regardless of the selected model or mode.',
+			'Always refer to yourself as 小T in all replies.',
 			'You are tool-aware and may call enabled tools to search/read/edit/create/run as needed to accomplish the user\'s request.',
-			'In agent-style workflows, autonomously decide when to call tools. The user does NOT need to type #toolName for you to use tools; #toolName is only a hint to force/guide tool choice.',
+			'In agent-style workflows, autonomously decide when to call tools.',
 			'When the user asks to create or modify files, use createFile/editFiles (with approval) instead of asking the user to manually copy/paste or apply patches.',
-			'If edits require approval (for example, sensitive file edits), the UI will show a confirmation card with buttons (Preview/Apply/Cancel). Wait for that UI decision; do NOT ask the user to type preview/apply/cancel as text.',
-			'For normal edits, apply edits via tools and rely on the pending edits review (Keep/Undo) instead of adding extra confirmation steps in the chat text.',
-			'Only ask clarifying questions when the missing information is truly required to proceed safely. Otherwise, proceed with sensible defaults, show a preview, and let the user approve or adjust.'
+			'For normal edits, apply edits via tools and rely on the pending edits review (Keep/Undo).',
+			'Only ask clarifying questions when the missing information is truly required to proceed safely.'
 		];
+
+		// TriLC agent system prompt has highest priority (per-agent from TriCompany)
+		const triLcPrompt = this.getTriLCAgentSystemPrompt(profileId);
+		if (triLcPrompt) {
+			return [
+				...base,
+				'',
+				`(TriCompany agent: ${profileId})`,
+				triLcPrompt
+			].join('\n');
+		}
 
 		if (custom) {
 			const body = String(custom.body ?? '').trim();
@@ -3957,49 +4161,8 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 				.join('\n');
 		}
 
-		if (profileId === 'ask-study') {
-			return [
-				...base,
-				'',
-				'(ask&study mode)',
-				'Primary goal: teach and help the user learn. Prefer explanations, mental models, and step-by-step guidance.',
-				'Start by confirming the user\'s goal and their background/knowledge level if not clear.',
-				'Prefer reading/inspecting over editing. However, when the user explicitly asks to write/update files (for example: "把它写入文件"), do it via tools and the approval flow.',
-				'In ask&study, do not require the user to type #createFile/#editFiles to trigger tool use. Decide and invoke the appropriate tool yourself when enabled.',
-				'Avoid multi-turn questionnaires for simple write requests. If the target file/path is known and a reasonable default template is acceptable, propose it as a preview and let the user approve or tweak.',
-				'All write/modify/execute actions must stay inside the ask&study sandbox directory. If an action would affect files outside the sandbox, refuse and propose a safe alternative inside the sandbox.',
-				'Do not use powerful VS Code commands, command tools, or MCP tools unless explicitly allowed by tools/policy. If unavailable, explain and continue without them.',
-				'When generating a course/learning plan, structure it as modules, prerequisites, exercises, and checkpoints.'
-			].join('\n');
-		}
-
-		if (profileId === 'edit-test') {
-			return [
-				...base,
-				'',
-				'(edit&test mode)',
-				'Primary goal: implement and test changes safely. Prefer small, verifiable steps and run relevant checks when possible.'
-			].join('\n');
-		}
-
-		if (profileId === 'agent-vm') {
-			return [
-				...base,
-				'',
-				'(agent&vm mode)',
-				'Primary goal: run and validate in isolated environments. Be explicit about commands and expected outputs.'
-			].join('\n');
-		}
-
-		if (profileId === 'agent-deploy') {
-			return [
-				...base,
-				'',
-				'(agent&deploy mode)',
-				'Primary goal: deployment planning and safe execution. Be cautious with destructive actions and credentials; require confirmation for risky steps.'
-			].join('\n');
-		}
-
+		/* v0.1 removed: mode-specific system prompts (ask-study/edit-test/agent-vm/agent-deploy) */
+		// TriLC agents provide their own system prompts.
 		return base.join('\n');
 	}
 
@@ -4026,19 +4189,8 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private async ensureAskStudySandboxInitializedIfPossible(): Promise<void> {
-		if (this.selectedAgentProfileId !== 'ask-study') return;
-		// Only initialize when a real model is available.
-		const model = this.getSelectedModel();
-		if (!model) return;
-
-		const folder = vscode.workspace.workspaceFolders?.[0];
-		if (!folder) return;
-		const rel = this.getAskStudySandboxRelFromConfig();
-		const dirUri = vscode.Uri.joinPath(folder.uri, rel);
-		await vscode.workspace.fs.createDirectory(dirUri);
-
-		await this.ensureAskStudyReadmeInitialized(dirUri);
-		await this.ensureAskStudyRequirementsInitialized(dirUri);
+		/* v0.1: ask-study mode removed — no-op */
+		return;
 	}
 
 	private async ensureAskStudyReadmeInitialized(dirUri: vscode.Uri): Promise<void> {
@@ -4164,16 +4316,14 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 
 	private computeEnabledMcpServerIds(
 		profile: any,
-		isAskStudy: boolean,
+		/* v0.1 removed: isAskStudy param */
 		mcpConfigs: McpServerConfig[],
 		serverReferences: Set<string>
 	): Set<string> {
 		const mcpEnabledSetRaw: Set<string> = profile.enabledMcpServers
 			? new Set<string>(profile.enabledMcpServers.map((s: any) => String(s).trim()).filter(Boolean))
 			: new Set<string>(mcpConfigs.filter((s) => s.enabled).map((s) => s.id));
-		const mcpEnabledSet: Set<string> = isAskStudy
-			? new Set<string>(Array.from(mcpEnabledSetRaw).filter((id) => ASK_STUDY_ALLOWED_MCP_SERVER_IDS.has(id)))
-			: mcpEnabledSetRaw;
+		const mcpEnabledSet = mcpEnabledSetRaw;
 		const enabledServerIds = new Set<string>(mcpEnabledSet);
 		for (const id of serverReferences) enabledServerIds.add(id);
 		return enabledServerIds;
@@ -4243,9 +4393,13 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			const name = normalizeRef(ref);
 			if (!name) continue;
 			// Expand tool sets (e.g. #edit / #search) into underlying tool names.
-			if (!definedNames.has(name) && TOOL_SET_NAMES.has(name)) {
-				const set = TOOL_SETS[name];
-				for (const t of set?.tools ?? []) {
+			/* v0.1: inline TOOL_SETS */
+			const TOOL_SET_MAP: Record<string, string[]> = {
+				edit: ['createDirectory', 'createFile', 'editFiles', 'editNotebook', 'newJupyterNotebook'],
+				search: ['readFile', 'listDirectory', 'fileSearch', 'textSearch', 'searchResults', 'codebase', 'usages', 'changes', 'problems']
+			};
+			if (!definedNames.has(name) && name in TOOL_SET_MAP) {
+				for (const t of TOOL_SET_MAP[name]) {
 					if (definedNames.has(t)) enabledTools.add(t);
 				}
 				continue;
@@ -4260,11 +4414,9 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		commandTools: Map<string, CommandToolConfig>;
 	}> {
 		const profile = this.getEffectiveAgentProfile(profileId);
-		const isAskStudy = profile.id === 'ask-study';
-		const effectiveServerRefs = isAskStudy
-			? new Set<string>(Array.from(serverReferences).filter((s) => ASK_STUDY_ALLOWED_MCP_SERVER_IDS.has(s)))
-			: serverReferences;
-		const effectiveToolRefs = isAskStudy ? new Set<string>(Array.from(toolReferences)) : toolReferences;
+		/* v0.1 removed: isAskStudy */
+		const effectiveServerRefs = serverReferences;
+		const effectiveToolRefs = toolReferences;
 		const builtinDefs = getToolDefinitions();
 		// Treat an empty enabledBuiltinTools array as "use defaults".
 		// This prevents accidentally disabling all built-in tools (including write tools) for a profile.
@@ -4276,13 +4428,11 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		const cmdEnabledSetRaw = profile.enabledCommandTools
 			? new Set(profile.enabledCommandTools.map((s) => String(s).trim()).filter(Boolean))
 			: new Set(cmdConfigs.filter((t) => t.enabled).map((t) => t.name));
-		const cmdEnabledSet = isAskStudy
-			? new Set(Array.from(cmdEnabledSetRaw).filter((n) => ASK_STUDY_ALLOWED_COMMAND_TOOL_NAMES.has(n)))
-			: cmdEnabledSetRaw;
+		const cmdEnabledSet = cmdEnabledSetRaw;
 		const cmdIncluded = cmdConfigs.filter(
 			(t) =>
 				cmdEnabledSet.has(t.name) ||
-				(effectiveToolRefs.has(t.name) && (!isAskStudy || ASK_STUDY_ALLOWED_COMMAND_TOOL_NAMES.has(t.name)))
+				effectiveToolRefs.has(t.name)
 		);
 		const cmdMap = new Map<string, CommandToolConfig>();
 		for (const t of cmdConfigs) cmdMap.set(t.name, t);
@@ -4303,7 +4453,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		}));
 
 		const mcpConfigs = this.getMcpServerConfigsFromConfig();
-		const enabledServerIds = this.computeEnabledMcpServerIds(profile as any, isAskStudy, mcpConfigs, effectiveServerRefs);
+		const enabledServerIds = this.computeEnabledMcpServerIds(profile as any, mcpConfigs, effectiveServerRefs);
 		const effectiveMcpConfigs = mcpConfigs.map((s) => ({ ...s, enabled: enabledServerIds.has(s.id) }));
 		await this.mcpManager.refresh(effectiveMcpConfigs);
 
@@ -4400,10 +4550,24 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 				void webview.postMessage({ type: 'toolChips', items: Array.isArray(state.lastToolReferences) ? state.lastToolReferences : [] } as any);
 				// Do not scan workspace custom agents on startup; it can be slow on some filesystems (e.g. OneDrive).
 				// Settings > Custom Agents or filesystem watchers will refresh the list when needed.
-				this.postAgentsList();
-				this.postAgentProfileAndLabel();
+				// v0.1: Fetch TriLC agents first, then post combined agent list
+				void this.fetchAgentsFromTriLC().then(() => {
+					this.postAgentsList();
+					this.postAgentProfileAndLabel();
+				});
+				// Retry once after TriLC has had time to start
+				setTimeout(() => {
+					void this.fetchAgentsFromTriLC().then(() => {
+						if (this.tricompanyAgents.length) {
+							this.postAgentsList();
+							this.postAgentProfileAndLabel();
+						}
+					});
+				}, 8000);
 				void this.refreshModelsAndPost(state);
-				void this.ensureAskStudySandboxInitializedIfPossible();
+				/* v0.1 removed: askStudy sandbox init */
+				// W30 S5: Check TriLC daemon health and auto-reconnect active sessions
+				void this.checkTriLCStatusAndReconnect(state);
 				// If this host was opened via "move to editor", replay the pinned session/transcript.
 				const didReplayOnReady = Boolean(state.replayOnReady);
 				if (state.replayOnReady) {
@@ -5297,17 +5461,22 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 					// Tool suggestions from built-in tool definitions.
 					const toolPrefix = prefix.toLowerCase();
 					// Tool set suggestions (Copilot-like).
-					for (const setName of Object.keys(TOOL_SETS)) {
-						if (!toolPrefix || setName.toLowerCase().startsWith(toolPrefix)) {
-							items.push({
-								kind: 'tool',
-								label: setName,
-								detail: `Tool set · ${TOOL_SETS[setName]?.description ?? ''}`.trim(),
-								insertText: `#${setName}`
-							});
-						}
-						if (items.length >= 40) break;
-					}
+							/* v0.1: inline TOOL_SETS */
+							const TOOL_SET_SUGGESTIONS = [
+								{ name: 'edit', desc: 'Tool set for creating/modifying files (Copilot-like #edit).' },
+								{ name: 'search', desc: 'Tool set for reading/searching workspace context (Copilot-like #search).' }
+							];
+							for (const { name: setName, desc } of TOOL_SET_SUGGESTIONS) {
+								if (!toolPrefix || setName.toLowerCase().startsWith(toolPrefix)) {
+									items.push({
+										kind: 'tool',
+										label: setName,
+										detail: `Tool set · ${desc}`.trim(),
+										insertText: `#${setName}`
+									});
+								}
+								if (items.length >= 40) break;
+							}
 					const toolNames = getToolDefinitions()
 						.map((t) => String(t?.function?.name ?? '').trim())
 						.filter(Boolean);
@@ -5602,24 +5771,19 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 				return;
 			}
 			case 'setAgentProfile': {
-				const id = String(payload?.id ?? payload?.value ?? '').trim();
-				if (!id) return;
-				this.selectedAgentProfileId = id;
-				this.ensureSystemInstructionUpToDate(this.hostStates.sidebar);
-				this.ensureSystemInstructionUpToDate(this.hostStates.editor);
-				this.ensureTrilcSystemInstructionUpToDate(this.hostStates.sidebar);
-				this.ensureTrilcSystemInstructionUpToDate(this.hostStates.editor);
-				await this.context.globalState.update('tripilot.selectedAgentProfileId', id);
-				this.postAgentProfileAndLabel();
-				TripilotSettingsPanel.syncActiveAgentProfileFromChat(id);
-				if (id === 'ask-study') {
-					if (!this.lastModels.length) {
-						await this.refreshModelsAndPost(state);
-					}
-					await this.ensureAskStudySandboxInitializedIfPossible();
+					const id = String(payload?.id ?? payload?.value ?? '').trim();
+					if (!id) return;
+					this.selectedAgentProfileId = id;
+					this.ensureSystemInstructionUpToDate(this.hostStates.sidebar);
+					this.ensureSystemInstructionUpToDate(this.hostStates.editor);
+					this.ensureTrilcSystemInstructionUpToDate(this.hostStates.sidebar);
+					this.ensureTrilcSystemInstructionUpToDate(this.hostStates.editor);
+					await this.context.globalState.update('tripilot.selectedAgentProfileId', id);
+					this.postAgentProfileAndLabel();
+					TripilotSettingsPanel.syncActiveAgentProfileFromChat(id);
+					/* v0.1 removed: ask-study sandbox init */
+					return;
 				}
-				return;
-			}
 			case 'configureCustomAgents': {
 				TripilotSettingsPanel.show(this.context, this.mcpManager, 'customAgents');
 				return;
@@ -5832,7 +5996,8 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private getFallbackNonAutoTrilcModelId(): string | undefined {
-		const prefer = ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307'];
+		// Prefer DeepSeek models (TriLC default model family). Fall back to any non-auto model.
+		const prefer = ['deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'];
 		for (const id of prefer) {
 			if (this.lastTrilcModels.some((m) => m.id === id)) return id;
 		}
@@ -5881,158 +6046,112 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		return messages;
 	}
 
-	private async runTrilcDirectRequest(
+	// W30 Architecture Fix: executeViaTriLCClient replaces runTrilcDirectRequest.
+	// All LLM communication and tool execution is delegated to TriLC daemon.
+	// TriPilot only displays the SSE stream events — zero local execution.
+	private async executeViaTriLCClient(
 		state: ChatHostState,
-		args: {
-			modelId: string;
-			directives: ToolReferences;
-			userText: string;
-		}
+		userText: string,
 	): Promise<void> {
-		const cfg = this.getTrilcConfig();
-		if (!cfg.baseUrl) {
-			throw new Error('未配置 tripilot.trilcDirect.baseUrl');
-		}
+		const systemPrompt = state.trilcSystemInstruction ?? undefined;
+		const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
 
-		const built = await this.buildToolsForRequest(
-			this.selectedAgentProfileId,
-			args.directives.serverReferences,
-			args.directives.toolReferences
-		);
+		const submitReq: SubmitTaskRequest = {
+			message: userText,
+			systemPrompt,
+			context: {
+				workspaceRoot,
+			},
+		};
 
-		state.trilcConversation ??= [];
-		this.ensureTrilcSystemInstructionUpToDate(state);
+		let didStreamAssistant = false;
+		let streamedText = '';
+		let conversationId: string | undefined;
 
-		// Convert tool definitions to TrilcTool format (stable across iterations)
-		const trilcTools: TrilcTool[] = built.toolDefinitions
-			.filter((t) => built.enabledTools.has(t.function.name))
-			.map((t) => ({
-				name: t.function.name,
-				description: t.function.description ?? '',
-				input_schema: (t.function.parameters ?? {}) as Record<string, unknown>,
-			}));
+		try {
+			// ① Submit task to TriLC daemon
+			const submitRes = await this.triLcClient.submitTask(submitReq, state.abortController?.signal);
+			conversationId = submitRes.sessionId;
 
-		const maxIterations: number = vscode.workspace.getConfiguration('tripilot').get<number>('maxToolIterations', 6);
-		let iteration = 0;
-
-		while (iteration < maxIterations) {
-			// Check abort before each API call
-			if (state.abortController!.signal.aborted) break;
-
-			const messages = this.convertTrilcConversationToMessages(state.trilcConversation);
-
-			let didStreamAssistant = false;
-			let streamedText = '';
-
-			const { content: finalText, toolCalls } = await this.trilcClient.streamChat({
-				cfg: { baseUrl: cfg.baseUrl, apiKey: cfg.apiKey },
-				model: args.modelId,
-				system: state.trilcSystemInstruction,
-				messages,
-				tools: trilcTools.length ? trilcTools : undefined,
-				abortSignal: state.abortController!.signal,
-				onEvent: (event) => {
-					if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta.text) {
-						if (!didStreamAssistant) {
-							didStreamAssistant = true;
-							state.inProgressAssistantText = '';
-							this.postToHost(state, { type: 'chatAssistantStart', initialText: '' });
-						}
-						state.inProgressAssistantText = (state.inProgressAssistantText ?? '') + event.delta.text;
-						streamedText += event.delta.text;
-						this.postToHost(state, { type: 'chatAssistantDelta', delta: event.delta.text });
+			// ② Open SSE stream and pipe events to webview
+			const callbacks: StreamCallbacks = {
+				onDelta: (content: string) => {
+					if (!didStreamAssistant) {
+						didStreamAssistant = true;
+						state.inProgressAssistantText = '';
+						this.postToHost(state, { type: 'chatAssistantStart', initialText: '' });
+					}
+					state.inProgressAssistantText = (state.inProgressAssistantText ?? '') + content;
+					streamedText += content;
+					this.postToHost(state, { type: 'chatAssistantDelta', delta: content });
+				},
+				onToolUse: (toolName: string, input: Record<string, unknown>) => {
+					const invocationId = `call_${crypto.randomUUID()}`;
+					this.postToHost(state, {
+						type: 'chatToolInvocationBegin',
+						invocationId,
+						toolName,
+						inputPreview: JSON.stringify(input).slice(0, 200),
+					});
+				},
+				onToolResult: (toolName: string, output: string, durationMs?: number) => {
+					// Note: invocationId matching is best-effort since TriLC doesn't echo it back.
+					const shortId = (conversationId ?? 'unknown').slice(-8);
+					this.postToHost(state, {
+						type: 'chatToolInvocationEnd',
+						invocationId: `call_${shortId}`,
+						toolName,
+						ok: !output.startsWith('Error:'),
+						outputPreview: output.slice(0, 200),
+						outputFull: output,
+						durationMs,
+					});
+				},
+				onTaskDone: (summary: string) => {
+					if (didStreamAssistant) {
+						this.postToHost(state, { type: 'chatAssistantEnd' });
+						state.inProgressAssistantText = undefined;
 					}
 				},
-			});
+				onTaskError: (error: string) => {
+					if (didStreamAssistant) {
+						this.postToHost(state, { type: 'chatAssistantEnd' });
+						state.inProgressAssistantText = undefined;
+					}
+					this.postToHost(state, { type: 'chatSetStatus', status: 'error', detail: error });
+				},
+			};
 
-			if (didStreamAssistant) {
-				this.postToHost(state, { type: 'chatAssistantEnd' });
-				state.inProgressAssistantText = undefined;
-			}
-
-			// No tool calls → final response, display and break
-			if (!toolCalls || toolCalls.length === 0) {
-				const displayText = streamedText || finalText || '';
-				if (!didStreamAssistant && displayText) {
-					this.postToHost(state, { type: 'chatAppend', role: 'assistant', text: displayText });
+			await this.triLcClient.streamSession(conversationId, callbacks, state.abortController?.signal);
+		} catch (err) {
+			if (state.abortController?.signal.aborted) {
+				// User cancelled — clean up gracefully
+				if (didStreamAssistant) {
+					this.postToHost(state, { type: 'chatAssistantEnd' });
+					state.inProgressAssistantText = undefined;
 				}
-				state.transcript.push({ role: 'assistant', text: displayText });
-				await this.appendHistory(state, {
-					kind: 'assistant_message',
-					text: displayText,
-					profileId: this.selectedAgentProfileId,
-					modelId: this.selectedModelId,
-				});
-				this.appendCheckpoint(state);
+				const cancelMsg = '[已取消]';
+				this.postToHost(state, { type: 'chatAppend', role: 'assistant', text: cancelMsg });
+				state.transcript.push({ role: 'assistant', text: cancelMsg });
 				return;
 			}
-
-			// Tool calls received → execute them
-			this.setAndPostStatus(state, 'running-tools');
-
-			// Append assistant message with tool_calls to conversation
-			state.trilcConversation.push({
-				role: 'assistant',
-				content: streamedText || finalText || undefined,
-				tool_calls: toolCalls,
-			});
-
-			for (const tc of toolCalls) {
-				const toolName = tc.function.name || 'unknown';
-				const toolInput = tc.function.arguments || '{}';
-				const invocationId = tc.id || `call_${crypto.randomUUID()}`;
-
-				this.postToHost(state, {
-					type: 'chatToolInvocationBegin',
-					invocationId,
-					toolName,
-					inputPreview: toolInput.slice(0, 200),
-				});
-
-				const t0 = Date.now();
-				let result: string;
-				try {
-					result = await executeToolCall(toolName, toolInput, {
-						abortSignal: state.abortController!.signal,
-						mcpManager: this.mcpManager,
-						policy: this.selectedAgentProfileId ? {
-							agentProfileId: this.selectedAgentProfileId,
-							askStudySandboxDir: String(vscode.workspace.getConfiguration('tripilot').get<string>('askStudySandboxDir', '.tripilot/ask-study')),
-						} : undefined,
-					});
-				} catch (e) {
-					result = `Error: ${e instanceof Error ? e.message : String(e)}`;
-				}
-				const durationMs = Date.now() - t0;
-
-				this.postToHost(state, {
-					type: 'chatToolInvocationEnd',
-					invocationId,
-					toolName,
-					ok: !result.startsWith('Error:'),
-					outputPreview: result.slice(0, 200),
-					outputFull: result,
-					durationMs,
-				});
-
-				// Append tool result to conversation
-				state.trilcConversation.push({
-					role: 'tool',
-					content: result,
-					tool_call_id: tc.id,
-				});
-			}
-
-			iteration++;
+			throw err;
 		}
 
-		// Max iterations reached without final text response
-		const exhaustedMsg = `[已达到最大工具调用次数 (${maxIterations})，请求终止。]`;
-		this.postToHost(state, { type: 'chatAppend', role: 'assistant', text: exhaustedMsg });
-		state.transcript.push({ role: 'assistant', text: exhaustedMsg });
+		// Finalize: append assistant response & checkpoint
+		const displayText = streamedText || '';
+		if (!didStreamAssistant && displayText) {
+			this.postToHost(state, { type: 'chatAppend', role: 'assistant', text: displayText });
+		}
+		state.transcript.push({ role: 'assistant', text: displayText });
+
+		state.trilcConversation ??= [];
+		state.trilcConversation.push({ role: 'user', content: userText });
+		state.trilcConversation.push({ role: 'assistant', content: displayText });
+
 		await this.appendHistory(state, {
 			kind: 'assistant_message',
-			text: exhaustedMsg,
+			text: displayText,
 			profileId: this.selectedAgentProfileId,
 			modelId: this.selectedModelId,
 		});
@@ -6170,14 +6289,8 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 				throw new Error('未配置 tripilot.trilcDirect.baseUrl');
 			}
 
-			if (!this.lastTrilcModels.length) {
-				await this.refreshModelsAndPost(state);
-			}
-			const modelId = this.getSelectedTrilcModelId();
-			if (!modelId) {
-				throw new Error('未检测到 TriLC Direct 可用模型。请先在 Settings → Models 里检查 /v1/models 是否可用。');
-			}
-			await this.runTrilcDirectRequest(state, { modelId, directives, userText: effectiveText });
+			// W30 Architecture Fix: delegate to TriLC daemon via tasks/submit + SSE stream.
+			await this.executeViaTriLCClient(state, effectiveText);
 			this.setAndPostStatus(state, 'idle');
 			return;
 		} catch (err) {
@@ -9191,7 +9304,7 @@ function applyReplaceStringOnce(args: {
 
 async function executeToolCall(name: string, input: unknown, runtime?: ToolRuntime): Promise<string> {
 	const policy = runtime?.policy;
-	const isAskStudy = policy?.agentProfileId === 'ask-study';
+	const isAskStudy = policy?.agentProfileId === 'ask-study'; /* v0.1: always false after agent mode removal */
 	const tripilotCfg = vscode.workspace.getConfiguration('tripilot');
 	const editsApprovalMode = String(tripilotCfg.get<string>('edits.approvalMode', 'post') ?? 'post');
 	const defaultSensitiveGlobs = [
@@ -9365,7 +9478,7 @@ async function executeToolCall(name: string, input: unknown, runtime?: ToolRunti
 
 	// Command-backed tools (extension commands).
 	if (runtime?.commandTools?.has(name)) {
-		if (isAskStudy && !ASK_STUDY_ALLOWED_COMMAND_TOOL_NAMES.has(name)) {
+		if (isAskStudy && !(new Set<string>()).has(name)) {
 			throw new Error(`ask&study 不允许使用该扩展工具：${name}`);
 		}
 		const cfg = runtime.commandTools.get(name);
@@ -9379,7 +9492,7 @@ async function executeToolCall(name: string, input: unknown, runtime?: ToolRunti
 	if (runtime?.mcpManager) {
 		const info = runtime.mcpManager.resolveMcpToolByLmName(name);
 		if (info) {
-			if (isAskStudy && !ASK_STUDY_ALLOWED_MCP_SERVER_IDS.has(info.serverId)) {
+			if (isAskStudy && !(new Set<string>()).has(info.serverId)) {
 				throw new Error(`ask&study 不允许使用该 MCP server：${info.serverId}`);
 			}
 			const result = await runtime.mcpManager.callToolByLmName(name, parsed ?? {});
@@ -9399,7 +9512,7 @@ async function executeToolCall(name: string, input: unknown, runtime?: ToolRunti
 		if (dot > 0) {
 			const serverId = name.slice(0, dot);
 			const toolName = name.slice(dot + 1);
-			if (isAskStudy && !ASK_STUDY_ALLOWED_MCP_SERVER_IDS.has(serverId)) {
+			if (isAskStudy && !(new Set<string>()).has(serverId)) {
 				throw new Error(`ask&study 不允许使用该 MCP server：${serverId}`);
 			}
 			const lmToolName = makeMcpLmToolName(serverId, toolName);
@@ -10866,7 +10979,7 @@ async function executeToolCall(name: string, input: unknown, runtime?: ToolRunti
 			const { commandId, args } = parsed as { commandId: string; name?: string; args?: string[] };
 			const id = String(commandId ?? '').trim();
 			if (!id) throw new Error('commandId is required.');
-			if (isAskStudy && !ASK_STUDY_ALLOWED_VSCODE_COMMAND_IDS.has(id)) {
+			if (isAskStudy && !(new Set<string>()).has(id)) {
 				throw new Error(`ask&study 不允许执行 VS Code command：${id}`);
 			}
 			const a = Array.isArray(args) ? args.map(String) : [];
@@ -11365,7 +11478,7 @@ async function executeToolCall(name: string, input: unknown, runtime?: ToolRunti
 		}
 		case 'vscode_executeCommand': {
 			const { command, args } = parsed as { command: string; args?: any[] };
-			if (isAskStudy && !ASK_STUDY_ALLOWED_VSCODE_COMMAND_IDS.has(String(command))) {
+			if (isAskStudy && !(new Set<string>()).has(String(command))) {
 				throw new Error(`ask&study 不允许直接执行 VS Code command：${String(command)}`);
 			}
 			const result = await vscode.commands.executeCommand(command, ...(Array.isArray(args) ? args : []));

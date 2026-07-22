@@ -1316,12 +1316,8 @@
       const shouldBeChecked = currentEnabledOptionalTools.has(toolName);
       el.checked = shouldBeChecked;
 
-      // Ask&Study: hard disable anything not allowed.
-      if (currentAgentProfileId === 'ask-study') {
-        el.disabled = allowed ? !allowed.has(toolName) : true;
-      } else {
-        el.disabled = false;
-      }
+      // v0.1: no more ask-study mode restrictions
+      el.disabled = false;
     }
   }
 
@@ -2270,15 +2266,19 @@
 
   agentMenuEl?.addEventListener('click', (e) => {
     const target = e.target;
-    if (!target || !target.dataset) return;
-    const value = target.dataset.value;
+    const item = target?.closest ? target.closest('.menuItem') : target;
+    if (!item || !item.dataset) return;
+    const value = item.dataset.value;
     if (!value) return;
     if (value === 'configureCustomAgents') {
       uiAction('configureCustomAgents');
       hideMenus();
       return;
     }
-    if (agentLabelEl) agentLabelEl.textContent = target.textContent || 'agent&vm';
+    if (agentLabelEl) {
+      const labelEl = item.querySelector?.('.menuItemLabel');
+      agentLabelEl.textContent = (labelEl?.textContent || item.textContent || 'agent&vm').trim();
+    }
     uiAction('setAgentProfile', { id: value });
     hideMenus();
   });
@@ -2944,7 +2944,17 @@
           btn.className = 'menuItem';
           btn.setAttribute('role', 'menuitem');
           btn.dataset.value = id;
-          btn.textContent = String(a.label ?? id);
+          const label = document.createElement('span');
+          label.className = 'menuItemLabel';
+          label.textContent = String(a.label ?? id);
+          btn.appendChild(label);
+          const desc = (a && typeof a === 'object' && a.description != null) ? String(a.description).trim() : '';
+          if (desc) {
+            const meta = document.createElement('span');
+            meta.className = 'menuItemMeta';
+            meta.textContent = desc;
+            btn.appendChild(meta);
+          }
           agentMenuEl.appendChild(btn);
         }
         return;
