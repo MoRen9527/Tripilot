@@ -307,7 +307,7 @@ type WebviewOutboundMessageExtended =
 				filteredCount?: number;
 		}
 	| { type: 'agentProfile'; id: string; label: string; allowedOptionalTools: string[]; enabledOptionalTools: string[] }
-	| { type: 'agents'; agents: Array<{ id: string; label: string; description?: string }> }
+	| { type: 'agents'; agents: Array<{ id: string; label: string; description?: string }>; loading?: boolean }
 	| {
 				type: 'sessions';
 				isHistoryEnabled: boolean;
@@ -3147,7 +3147,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		}
 		items.push({ id: '---', label: '---' } as any);
 		items.push({ id: 'configureCustomAgents', label: '配置 Custom Agents…' });
-		this.postAny({ type: 'agents', agents: items });
+		this.postAny({ type: 'agents', agents: items, loading: this.tricompanyAgents.length === 0 && visibleCustom.length === 0 });
 	}
 
 	private getWorkspaceCustomAgent(profileId: string): WorkspaceCustomAgentInfo | undefined {

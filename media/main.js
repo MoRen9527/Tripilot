@@ -2929,7 +2929,7 @@
         const agents = Array.isArray(msg.agents) ? msg.agents : [];
         if (!agentMenuEl) return;
         agentMenuEl.innerHTML = '';
-        if (!agents.length) {
+        if (msg.loading) {
           const loading = document.createElement('button');
           loading.className = 'menuItem muted';
           loading.setAttribute('role', 'menuitem');
