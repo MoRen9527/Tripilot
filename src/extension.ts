@@ -676,6 +676,62 @@ export function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
+	// ── Status bar: TriLC + TriModel health ──
+	const trilcStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+	trilcStatusBar.name = 'TriLC Status';
+	trilcStatusBar.tooltip = 'TriLC daemon status';
+	context.subscriptions.push(trilcStatusBar);
+
+	const trimodelStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
+	trimodelStatusBar.name = 'TriModel Status';
+	trimodelStatusBar.tooltip = 'TriModel API status';
+	context.subscriptions.push(trimodelStatusBar);
+
+	async function updateServiceStatus(): Promise<void> {
+		const baseUrl = vscode.workspace.getConfiguration('tripilot.trilcDirect').get<string>('baseUrl') || 'http://127.0.0.1:8711';
+		try {
+			const ctrl = new AbortController();
+			const timeout = setTimeout(() => ctrl.abort(), 3000);
+			const r = await fetch(`${baseUrl}/healthz`, { signal: ctrl.signal });
+			clearTimeout(timeout);
+			const body = await r.json() as { ok?: boolean; trimc?: string };
+			if (r.ok && body.ok) {
+				trilcStatusBar.text = '$(circle-filled) TriLC';
+				trilcStatusBar.color = new vscode.ThemeColor('terminal.ansiGreen');
+			} else {
+				trilcStatusBar.text = '$(error) TriLC';
+				trilcStatusBar.color = new vscode.ThemeColor('terminal.ansiRed');
+			}
+		} catch {
+			trilcStatusBar.text = '$(circle-slash) TriLC';
+			trilcStatusBar.color = new vscode.ThemeColor('terminal.ansiRed');
+		}
+		trilcStatusBar.show();
+
+		const tmUrl = 'http://127.0.0.1:3333';
+		try {
+			const ctrl = new AbortController();
+			const timeout = setTimeout(() => ctrl.abort(), 3000);
+			const r = await fetch(`${tmUrl}/v1/models`, { signal: ctrl.signal });
+			clearTimeout(timeout);
+			if (r.ok) {
+				trimodelStatusBar.text = '$(circle-filled) TriModel';
+				trimodelStatusBar.color = new vscode.ThemeColor('terminal.ansiGreen');
+			} else {
+				trimodelStatusBar.text = '$(error) TriModel';
+				trimodelStatusBar.color = new vscode.ThemeColor('terminal.ansiRed');
+			}
+		} catch {
+			trimodelStatusBar.text = '$(circle-slash) TriModel';
+			trimodelStatusBar.color = new vscode.ThemeColor('terminal.ansiRed');
+		}
+		trimodelStatusBar.show();
+	}
+
+	void updateServiceStatus();
+	const statusInterval = setInterval(() => void updateServiceStatus(), 30_000);
+	context.subscriptions.push({ dispose: () => clearInterval(statusInterval) });
+
 	// Background prefetch: try to warm TriLC model list to speed first Settings open.
 	void (async () => {
 		try {
@@ -3136,7 +3192,19 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		// TriCompany agents from TriLC (primary source)
 		if (this.tricompanyAgents.length) {
 			for (const a of this.tricompanyAgents) {
-				items.push({ id: a.id, label: a.displayName, description: a.decisionRights });
+				const rights = a.decisionRights;
+				const description = rights
+					? [
+							rights.approve.length ? `approve: ${rights.approve.join(', ')}` : '',
+							rights.freeze.length ? `freeze: ${rights.freeze.join(', ')}` : '',
+							rights.escalate.length ? `escalate: ${rights.escalate.join(', ')}` : ''
+						].filter(Boolean).join(' · ') || undefined
+					: undefined;
+				items.push({
+					id: a.id,
+					label: a.displayName,
+					description: [a.description, description].filter(Boolean).join(' · ') || undefined
+				});
 			}
 		}
 		this.postAny({ type: 'agents', agents: items, loading: this.tricompanyAgents.length === 0 });
@@ -3160,6 +3228,10 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 							if (prompt) this.tricompanyAgentSystemPrompts.set(a.id, prompt);
 						} catch { /* best-effort */ }
 					}
+					this.ensureSystemInstructionUpToDate(this.hostStates.sidebar);
+					this.ensureSystemInstructionUpToDate(this.hostStates.editor);
+					this.ensureTrilcSystemInstructionUpToDate(this.hostStates.sidebar);
+					this.ensureTrilcSystemInstructionUpToDate(this.hostStates.editor);
 				}
 			} catch {
 				// TriLC not available — keep empty list
@@ -3172,6 +3244,22 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 
 	private getTriLCAgentSystemPrompt(agentId: string): string | undefined {
 		return this.tricompanyAgentSystemPrompts.get(String(agentId ?? '').trim());
+	}
+
+	private async ensureSelectedAgentContractLoaded(): Promise<void> {
+		const profileId = String(this.selectedAgentProfileId ?? '').trim();
+		if (!profileId) throw new Error('请先选择一个 TriLC Agent Contract。');
+		if (this.getWorkspaceCustomAgent(profileId)) return;
+		if (!this.getTriLCAgentSystemPrompt(profileId)) await this.fetchAgentsFromTriLC();
+		const contractAgent = this.tricompanyAgents.find((agent) => agent.id === profileId);
+		if (!contractAgent) throw new Error(`TriLC 未返回所选 Agent Contract：${profileId}`);
+		if (!this.getTriLCAgentSystemPrompt(profileId)) {
+			throw new Error(`Agent Contract 缺少 system prompt：${profileId}`);
+		}
+		this.ensureSystemInstructionUpToDate(this.hostStates.sidebar);
+		this.ensureSystemInstructionUpToDate(this.hostStates.editor);
+		this.ensureTrilcSystemInstructionUpToDate(this.hostStates.sidebar);
+		this.ensureTrilcSystemInstructionUpToDate(this.hostStates.editor);
 	}
 
 	private mapCustomAgentToolsToOptionalBuiltinTools(toolSpecs: string[] | undefined): Set<string> {
@@ -3201,6 +3289,16 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 					for (const n of TOOL_SET_EDIT) enabled.add(n);
 					continue;
 				}
+			if (t === 'read') {
+				for (const n of TOOL_SET_SEARCH) enabled.add(n);
+				continue;
+			}
+			if (t === 'execute') {
+				for (const n of ['createAndRunTask', 'runInTerminal', 'getTerminalOutput', 'runTask', 'runTests']) {
+					enabled.add(n);
+				}
+				continue;
+			}
 			if (t === 'terminal') {
 				enabled.add('runInTerminal');
 				enabled.add('getTerminalOutput');
@@ -3216,8 +3314,21 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private getEffectiveAgentProfile(profileId: string): AgentProfileConfig {
+		const contractAgent = this.tricompanyAgents.find((candidate) => candidate.id === profileId);
+		if (contractAgent) {
+			const contractTools = Array.isArray(contractAgent.tools?.tools)
+				? contractAgent.tools.tools.map(String)
+				: [];
+			return {
+				id: contractAgent.id,
+				name: contractAgent.displayName || contractAgent.id,
+				enabledBuiltinTools: Array.from(this.mapCustomAgentToolsToOptionalBuiltinTools(contractTools)),
+				enabledCommandTools: [],
+				enabledMcpServers: []
+			};
+		}
 		const agent = this.getWorkspaceCustomAgent(profileId);
-		if (!agent) return getAgentProfileMerged(profileId);
+		if (!agent) return { id: profileId, name: profileId };
 		// v0.1: generic base config (no more agent-vm default)
 		const base: AgentProfileConfig = { id: profileId, name: profileId };
 		const enabledBuiltin = Array.from(this.mapCustomAgentToolsToOptionalBuiltinTools(agent.tools));
@@ -4086,6 +4197,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 
 	private ensureTrilcSystemInstructionUpToDate(state: ChatHostState): void {
 		const instruction = this.buildSystemInstructionForProfile(this.selectedAgentProfileId);
+		state.trilcSystemInstruction = instruction;
 		const msg: OpenAIChatMessage = { role: 'system', content: instruction };
 		if (!state.trilcConversation) state.trilcConversation = [];
 		if (!state.trilcConversation.length) {
@@ -4110,28 +4222,20 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 
 	private buildSystemInstructionForProfile(profileId: string): string {
 		const custom = this.getWorkspaceCustomAgent(profileId);
-		/* v0.1: simplified base — agent-specific prompts come from TriLC */
+		// TriLC Contract prompt is authoritative for TriCompany agents.
+		const triLcPrompt = this.getTriLCAgentSystemPrompt(profileId);
+		if (triLcPrompt) return triLcPrompt;
+
+		// Host-neutral fallback for workspace custom agents only. Tripilot owns no persona.
 		const base = [
-			'(Tripilot System)',
-			'You are Tripilot (小T), a learning assistant running inside TriMetaverse(三元宇宙).',
-			'Always refer to yourself as 小T in all replies.',
+			'(Tripilot Runtime)',
+			'Follow the selected agent instructions. Tripilot is only the UI and transport host, not an agent persona.',
 			'You are tool-aware and may call enabled tools to search/read/edit/create/run as needed to accomplish the user\'s request.',
 			'In agent-style workflows, autonomously decide when to call tools.',
 			'When the user asks to create or modify files, use createFile/editFiles (with approval) instead of asking the user to manually copy/paste or apply patches.',
 			'For normal edits, apply edits via tools and rely on the pending edits review (Keep/Undo).',
 			'Only ask clarifying questions when the missing information is truly required to proceed safely.'
 		];
-
-		// TriLC agent system prompt has highest priority (per-agent from TriCompany)
-		const triLcPrompt = this.getTriLCAgentSystemPrompt(profileId);
-		if (triLcPrompt) {
-			return [
-				...base,
-				'',
-				`(TriCompany agent: ${profileId})`,
-				triLcPrompt
-			].join('\n');
-		}
 
 		if (custom) {
 			const body = String(custom.body ?? '').trim();
@@ -4193,7 +4297,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			// continue
 		}
 
-		const readme = `# Tripilot · ask&study 沙盒\n\n欢迎来到 **ask&study**（学习模式）的专属沙盒目录。\n\n## 开始前请先读完\n\n1. 请阅读本文件，开始你的学习之旅。\n2. 你可以把想学习的内容/当前要解决的问题，直接在 Tripilot Chat 对话框和小T多轮沟通。\n   - 也请尽量介绍你的背景与现有知识结构（例如：你的角色/行业、会什么/不会什么、学过哪些课程或做过哪些项目、希望补齐哪些短板）。\n   - 这些信息会帮助小T更准确地制定课程体系与学习领域规划。\n   - 当问题逐渐清晰时，可以对小T说：\n     > “请帮我记录到需求”\n   - 小T会在本目录生成/更新一份需求 Markdown 文档（\`requirements.md\`），便于你审阅与迭代。\n3. 请尽量清楚地告诉小T：你**想实现或达到什么目标/目的**（例如：做出一个产品、拿到某个证书、掌握某项技能、完成一个项目等）。\n   - 目标越明确，小T越容易帮你规划学习领域边界、课程结构与优先级。\n4. 你也可以把一些学习资料放到本目录（例如：文本、笔记、链接清单、视频文件或视频链接）。\n   - 小T可以基于这些资料，帮你生成更体系化的课程大纲、学习路径与阶段练习。\n5. 当需求文档 **1.0.0** 版本确定后，小T会协助你做更全面的梳理：\n   - 从需求到解决方案的整体设计与拆解\n   - 聚焦当前最需要解决问题所需的知识体系\n   - 以及面向长期发展的知识图谱与学习计划\n6. 小T会帮你整理该领域的优质学习来源（专家、博主、视频/文字媒体等），并结合你平时的交流给出阅读建议与精力分配（后续版本逐步完善）。\n7. 小T会协助你制定学习计划并跟踪进度：\n   - 阶段性进步时升级你的学习徽章与能力图\n   - 长期中断或能力退步时进行提醒与调整（后续版本逐步完善）\n   - 你也可以选择是否向潜在雇主/合作伙伴/粉丝公开这些成果\n8. 当学习到一定阶段，你可以尝试把学到的东西做成产品：\n   - ask&study：学习并开始设计产品\n   - edit&test：实现与测试产品\n   - agent&vm：在隔离环境跑通产品\n   - agent&deploy：部署到公共资源并上线变现\n9. 这是一个人人都可以产出产品的时代。相信自己——**学以致用**是学习最大的奖赏。\n\n---\n\n> 提示：ask&study 模式下的写入、修改、运行等操作会被限制在本沙盒目录内，以避免影响你的工作区其它文件。\n`;
+		const readme = `# Tripilot · ask&study 沙盒\n\n该目录用于保存学习资料和需求记录。Tripilot 只提供界面与传输能力，实际角色身份、行为和工具配置由当前选中的 Agent Contract 决定。\n\n当问题逐渐清晰时，可以对当前 Agent 说“请帮我记录到需求”，由 Agent 生成或更新 \`requirements.md\`。\n`;
 
 		await vscode.workspace.fs.writeFile(readmeUri, Buffer.from(readme, 'utf8'));
 	}
@@ -5817,7 +5921,15 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 					});
 					return;
 				}
-				this.enabledTools = new Set(tools);
+				if (this.tricompanyAgents.some((agent) => agent.id === this.selectedAgentProfileId)) {
+					this.postToHost(state, {
+						type: 'chatAppend',
+						role: 'tool',
+						text: '当前 Agent 的工具配置由 TriLC Contract 控制，Tripilot 不保存本地覆盖。'
+					});
+					this.postAgentProfileAndLabel();
+					return;
+				}
 				if (this.getWorkspaceCustomAgent(this.selectedAgentProfileId)) {
 					this.postToHost(state, {
 						type: 'chatAppend',
@@ -5826,6 +5938,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 					});
 					return;
 				}
+				this.enabledTools = new Set(tools);
 				await setAgentProfileOptionalTools(this.selectedAgentProfileId, this.enabledTools);
 				this.postToHost(state, { type: 'chatAppend', role: 'tool', text: `已更新 Tools：${tools.join(', ') || '(none)'}` });
 				return;
@@ -6058,6 +6171,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		let didStreamAssistant = false;
 		let streamedText = '';
 		let conversationId: string | undefined;
+		let taskError: string | undefined;
 
 		try {
 			// ① Submit task to TriLC daemon
@@ -6105,6 +6219,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 					}
 				},
 				onTaskError: (error: string) => {
+					taskError = error;
 					if (didStreamAssistant) {
 						this.postToHost(state, { type: 'chatAssistantEnd' });
 						state.inProgressAssistantText = undefined;
@@ -6114,6 +6229,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			};
 
 			await this.triLcClient.streamSession(conversationId, callbacks, state.abortController?.signal);
+			if (taskError) throw new Error(taskError);
 		} catch (err) {
 			if (state.abortController?.signal.aborted) {
 				// User cancelled — clean up gracefully
@@ -6152,6 +6268,14 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 
 	private async handleUserMessage(text: string, state: ChatHostState) {
 		if (!text.trim()) return;
+		try {
+			await this.ensureSelectedAgentContractLoaded();
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			this.setAndPostStatus(state, 'error', message);
+			this.postToHost(state, { type: 'chatAppend', role: 'assistant', text: `Error: ${message}` });
+			return;
+		}
 		// Copilot-like: any new user message invalidates the last restore/redo opportunity.
 		if (this.lastCheckpointRestoreByHost[state.kind]) {
 			this.lastCheckpointRestoreByHost[state.kind] = undefined;

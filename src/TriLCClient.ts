@@ -73,8 +73,14 @@ export interface RecoverResponse {
 export interface TriLCAgent {
   id: string;
   displayName: string;
-  decisionRights: string;
-  tools: string[];
+  description?: string;
+  hasSystemPrompt?: boolean;
+  decisionRights?: {
+    approve: string[];
+    freeze: string[];
+    escalate: string[];
+  };
+  tools?: Record<string, unknown>;
   systemPrompt?: string;
 }
 

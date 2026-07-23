@@ -73,6 +73,21 @@ function extractAliasMapFromExecuteToolCall(extensionTs) {
 function main() {
 	const ts = readText(EXTENSION_TS);
 	const exposed = extractOptionalToolNames(ts);
+	const hasLocalExecutor = ts.includes('async function executeToolCall');
+	if (!hasLocalExecutor) {
+		const delegatesToTriLC =
+			ts.includes('private async executeViaTriLCClient') &&
+			ts.includes('this.triLcClient.submitTask') &&
+			ts.includes('this.triLcClient.streamSession');
+		console.log('Exposed tools (OPTIONAL_TOOL_NAMES):', exposed.length);
+		console.log('Execution mode:', 'TriLC delegated');
+		if (!delegatesToTriLC) {
+			console.log('\nMissing TriLC task delegation path for the exposed tool surface.');
+			process.exit(1);
+		}
+		console.log('\nOK: Tool execution is delegated to TriLC.');
+		return;
+	}
 	const implemented = extractCaseNamesFromExecuteToolCall(ts);
 	const aliasKeys = extractAliasKeysFromExecuteToolCall(ts);
 	const aliasMap = extractAliasMapFromExecuteToolCall(ts);
