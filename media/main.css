@@ -21,6 +21,7 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  position: relative;
 }
 
 .topbar {
@@ -195,9 +196,42 @@ body {
   margin-left: 2px;
 }
 
+/* Sessions overlay — Copilot-like slide-in panel, independent of main flex flow */
+.sessionsOverlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  background: var(--vscode-sideBar-background);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.sessionsOverlay.hidden {
+  display: none;
+}
+
+.sessionsOverlayHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  flex: 0 0 auto;
+}
+
+.sessionsOverlayTitle {
+  font-weight: 600;
+  font-size: 13px;
+}
+
 .sessions {
   padding: 8px 10px 10px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .sessionNav {

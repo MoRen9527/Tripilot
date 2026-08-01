@@ -149,6 +149,9 @@
   const btnSessionsRefreshEl = document.getElementById('btnSessionsRefresh');
   const btnSessionsSearchEl = document.getElementById('btnSessionsSearch');
   const btnSessionsFilterEl = document.getElementById('btnSessionsFilter');
+  const btnHistoryEl = document.getElementById('btnHistory');
+  const sessionsOverlayEl = document.getElementById('sessionsOverlay');
+  const btnSessionsOverlayCloseEl = document.getElementById('btnSessionsOverlayClose');
 
   // Approval (edit review)
   const approvalEl = document.getElementById('approval');
@@ -1143,26 +1146,43 @@
   }
 
   function getRecentSessionsLimit() {
-    // Compute how many session rows we can show while keeping a minimum chat area visible.
-    // This is intentionally heuristic but stable across window sizes.
-    const topbarH = document.querySelector('.topbar')?.getBoundingClientRect().height ?? 0;
-    const composerH = document.querySelector('.composer')?.getBoundingClientRect().height ?? 0;
-    const approvalH = approvalEl && !approvalEl.classList.contains('hidden') ? (approvalEl.getBoundingClientRect().height ?? 0) : 0;
-    const minMessagesH = 180;
-    const availableForSessionsTotal = Math.max(0, window.innerHeight - topbarH - approvalH - composerH - minMessagesH);
-
-    const navOrHeaderH = (sessionNavEl && !sessionNavEl.classList.contains('hidden'))
-      ? (sessionNavEl.getBoundingClientRect().height ?? 0)
-      : (sessionsHeaderEl?.getBoundingClientRect().height ?? 0);
-    const toggleH = (btnSessionsToggleEl && !btnSessionsToggleEl.classList.contains('hidden'))
-      ? (btnSessionsToggleEl.getBoundingClientRect().height ?? 0)
-      : 0;
-    const paddingAndGaps = 20;
-    const availableListH = Math.max(0, availableForSessionsTotal - navOrHeaderH - toggleH - paddingAndGaps);
-    const rowH = measureSessionRowHeight();
-    const limit = Math.floor(availableListH / rowH);
-    return Math.max(1, Math.min(12, limit || 1));
+    // Sessions now live in an independent overlay with its own scrollbar,
+    // so we no longer need to compete for vertical space with messages.
+    // Return a generous limit; the overlay scrolls if needed.
+    return 12;
   }
+
+  // --- Sessions overlay toggle (Copilot-like) ---
+  function openSessionsOverlay() {
+    if (!sessionsOverlayEl) return;
+    sessionsOverlayEl.classList.remove('hidden');
+    setTimeout(() => {
+      try { btnSessionsOverlayCloseEl?.focus(); } catch { /* ignore */ }
+    }, 0);
+  }
+
+  function closeSessionsOverlay() {
+    if (!sessionsOverlayEl) return;
+    sessionsOverlayEl.classList.add('hidden');
+  }
+
+  function toggleSessionsOverlay() {
+    if (!sessionsOverlayEl) return;
+    if (sessionsOverlayEl.classList.contains('hidden')) {
+      openSessionsOverlay();
+    } else {
+      closeSessionsOverlay();
+    }
+  }
+
+  btnHistoryEl?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleSessionsOverlay();
+  });
+
+  btnSessionsOverlayCloseEl?.addEventListener('click', () => {
+    closeSessionsOverlay();
+  });
 
   // Continue is only available when the last rendered message is assistant and we're not busy.
   // Copilot-like: after the user sends, it becomes unavailable until assistant replies.
@@ -2544,11 +2564,20 @@
 
     hideMenus();
     hideHashSuggest();
+    // Close sessions overlay on click outside
+    if (sessionsOverlayEl && !sessionsOverlayEl.classList.contains('hidden')) {
+      if (target && sessionsOverlayEl.contains(target)) return;
+      if (target === btnHistoryEl) return;
+      closeSessionsOverlay();
+    }
   }, true);
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       hideMenus();
       hideHashSuggest();
+      if (sessionsOverlayEl && !sessionsOverlayEl.classList.contains('hidden')) {
+        closeSessionsOverlay();
+      }
     }
   });
 

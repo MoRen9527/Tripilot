@@ -1351,7 +1351,8 @@ async function resolveTriLCControlCommand(): Promise<TriLCControlCommand> {
 	const env: NodeJS.ProcessEnv = { ...process.env };
 	const triCompanyFolder = vscode.workspace.workspaceFolders?.find((folder) => folder.name.toLowerCase() === 'tricompany');
 	if (!env.TRICOMPANY_SOURCE_PATH && triCompanyFolder) {
-		env.TRICOMPANY_SOURCE_PATH = vscode.Uri.joinPath(triCompanyFolder.uri, '.github', 'source-agents').fsPath;
+		// w32-2 fix: source-agents is at TriCompany root, not under .github/
+		env.TRICOMPANY_SOURCE_PATH = vscode.Uri.joinPath(triCompanyFolder.uri, 'source-agents').fsPath;
 	}
 	const bundledTriLCRoot = vscode.Uri.joinPath(vscode.Uri.file(vscode.env.appRoot), 'tools', 'trilc');
 	if (!env.TRICOMPANY_SOURCE_PATH) {

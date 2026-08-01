@@ -564,7 +564,7 @@ async function persistWelcomeSettings(result: WelcomeSetupResult): Promise<void>
   // Mark setup completed
   await tripilot.update('setupCompleted', true, vscode.ConfigurationTarget.Global);
 
-  // Persist to %APPDATA%/TriCade/trilc-config.json
+  // Persist to %APPDATA%/TriCade/trilc-config.json (human-readable reference config)
   try {
     const appData = process.env.APPDATA || process.env.HOME || '';
     if (appData) {
@@ -587,6 +587,35 @@ async function persistWelcomeSettings(result: WelcomeSetupResult): Promise<void>
   } catch (e) {
     // Non-critical: do not block setup on config file write failure
     console.error('[WelcomeSetup] Failed to write trilc-config.json:', e);
+  }
+
+  // w32-2 fix: Bridge wizard API config to TriLC's key-cache.
+  // TriLC reads keys from %LOCALAPPDATA%/trilc/keys.json; without this,
+  // the user-entered API key from the wizard never reaches TriLC.
+  try {
+    const localAppData = process.env.LOCALAPPDATA || process.env.HOME || '';
+    if (localAppData) {
+      const trilcDir = path.join(localAppData, 'trilc');
+      if (!fs.existsSync(trilcDir)) {
+        fs.mkdirSync(trilcDir, { recursive: true });
+      }
+      const keyCachePath = path.join(trilcDir, 'keys.json');
+      const keyCache = {
+        keys: {
+          deepseek: {
+            api_key: result.apiKey,
+            base_url: result.apiEndpoint || 'https://api.deepseek.com',
+          },
+        },
+        defaultModel: result.modelId,
+        refreshIntervalS: 900,
+        fetchedAt: Date.now(),
+        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+      };
+      fs.writeFileSync(keyCachePath, JSON.stringify(keyCache, null, 2), 'utf-8');
+    }
+  } catch (e) {
+    console.error('[WelcomeSetup] Failed to write TriLC key-cache:', e);
   }
 }
 
