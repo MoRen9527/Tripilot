@@ -291,7 +291,7 @@ async function runShellCommand(command: string, cwd: string, timeout: number): P
 
 const VERSION = '0.1.0';
 const DEFAULT_PORT = 8711;
-const DEFAULT_MODEL = 'deepseek-v4-pro';
+const DEFAULT_MODEL = 'tmv-deepseek-v4-pro';
 const TRILC_BASE = 'http://127.0.0.1';
 
 interface CliOptions {

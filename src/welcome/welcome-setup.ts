@@ -221,7 +221,7 @@ let testing = false;
 let wizardData = {
   language: 'zh',
   apiKey: '',
-  modelId: 'deepseek-v4-pro',
+  modelId: 'tmv-deepseek-v4-pro',
   apiEndpoint: 'https://api.deepseek.com',
   trimcUrl: '',
   tricompanyEnabled: false,
@@ -372,7 +372,7 @@ function collectFields() {
   var el = document.getElementById('apiKeyInput');
   if (el) wizardData.apiKey = el.value;
   el = document.getElementById('modelIdInput');
-  if (el) wizardData.modelId = el.value || 'deepseek-v4-pro';
+  if (el) wizardData.modelId = el.value || 'tmv-deepseek-v4-pro';
   el = document.getElementById('endpointInput');
   if (el) wizardData.apiEndpoint = el.value || 'https://api.deepseek.com';
   el = document.getElementById('trimcUrlInput');

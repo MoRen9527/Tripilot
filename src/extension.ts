@@ -6106,7 +6106,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 
 	private getFallbackNonAutoTrilcModelId(): string | undefined {
 		// Prefer DeepSeek models (TriLC default model family). Fall back to any non-auto model.
-		const prefer = ['deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'];
+		const prefer = ['tmv-deepseek-v4-pro', 'tmv-deepseek-chat', 'tmv-deepseek-reasoner'];
 		for (const id of prefer) {
 			if (this.lastTrilcModels.some((m) => m.id === id)) return id;
 		}
