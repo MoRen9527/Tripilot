@@ -2641,6 +2641,15 @@
     confirm: 'CONFIRM · 协同确认'
   };
   const INIT_PHASE_STATES = ['selfcheck', 'onboarding', 'project-link', 'sync', 'confirm'];
+  // i4-2：五维同步逐维标签（未同步/同步中/已同步三态渲染源）
+  const INIT_SYNC_DIM_LABELS = {
+    company: '公司',
+    model: '模型',
+    keys: '密钥（仅指纹）',
+    employees: '员工',
+    project: '项目'
+  };
+  const INIT_SYNC_DIMS = ['company', 'model', 'keys', 'employees', 'project'];
 
   function initCardVisible() {
     return !!initCardPayload && INIT_PHASE_STATES.includes(String(initCardPayload.chainState || ''));
@@ -2742,6 +2751,55 @@
       }
     }
 
+    // ── SYNC 五维同步卡（i4-2 §二.4：逐维三态 + 触发 + applied 收敛；
+    // 零本地执行——本呈现层只渲染 + 发 daemon 指令）──
+    if (cs === 'sync' || cs === 'confirm') {
+      const sync = card.syncStatus || null;
+      const phase = (sync && sync.phaseDetail && sync.phaseDetail.status) || 'pending';
+      const localFull = sync ? sync.localBundleId : null;
+      const appliedFull = (sync && sync.remote && sync.remote.appliedBundleId) || null;
+      const reachable = !!(sync && sync.remote && sync.remote.reachable);
+      const appliedSame = !!(localFull && appliedFull && localFull === appliedFull);
+      const phaseNote = phase === 'pushed' ? '已推送'
+        : phase === 'applied' ? '已应用'
+        : phase === 'failed' ? '失败（可重跑）'
+        : '待补';
+      blocks.push(
+        '<div class="initCheck"><b>五维同步</b>' +
+        (localFull ? ' · bundle=' + escapeHtml(String(localFull).slice(0, 8)) : '') +
+        ' · ' + phaseNote + '</div>'
+      );
+      // 服务器面收敛行（写读闭环探针 = sync commit 即探针；applied 由 fleet 每 15min 收敛）
+      if (!reachable) {
+        blocks.push('<div class="initCheck initCheckDegraded">服务器面：不可达（同步仍可推送，applied 收敛由 fleet 每 15min 拉取）</div>');
+      } else if (appliedSame) {
+        blocks.push('<div class="initCheck initCheckOk">服务器已应用同 bundle ✓</div>');
+      } else {
+        blocks.push(
+          '<div class="initCheck">服务器面：' +
+          (appliedFull ? '已应用 bundle=' + escapeHtml(String(appliedFull).slice(0, 8)) : '未应用') +
+          ' — fleet 每 15min 收敛</div>'
+        );
+      }
+      // 逐维三态行（init:sync-progress 事件 live 更新；未触发 = 未同步）
+      for (const dim of INIT_SYNC_DIMS) {
+        const appliedDim = (sync && sync.remote && sync.remote.dims) ? sync.remote.dims[dim] : null;
+        const serverMark = appliedDim === 'warning' ? '（服务器 warning）' : appliedDim === 'unavailable' ? '（服务器降级）' : '';
+        blocks.push(
+          '<div class="initCheck" data-sync-dim="' + escapeHtml(dim) + '">' +
+          '<span>—</span><span>' + escapeHtml(INIT_SYNC_DIM_LABELS[dim] || dim) + '：未同步' + escapeHtml(serverMark) + '</span></div>'
+        );
+      }
+      // 触发（sync 态可发起/重跑；confirm 态只呈现收敛，Phase D 确认卡承接）
+      if (cs === 'sync') {
+        blocks.push(
+          '<div class="initCardActions"><button id="initCardRunSync">' +
+          ((phase === 'pushed' || phase === 'failed') ? '重新同步（幂等重跑）' : '发起同步') +
+          '</button><div id="initCardSyncError" class="initCheckFail"></div></div>'
+        );
+      }
+    }
+
     // ── assemble 提交结果行 ──
     const res = card.assembleResult;
     if (res) {
@@ -2768,6 +2826,8 @@
     if (refreshBtn) refreshBtn.addEventListener('click', () => uiAction('initRefresh'));
     const runBtn = document.getElementById('initCardRunSelfcheck');
     if (runBtn) runBtn.addEventListener('click', () => uiAction('initSelfcheckRun'));
+    const syncBtn = document.getElementById('initCardRunSync');
+    if (syncBtn) syncBtn.addEventListener('click', () => uiAction('initSyncRun'));
     const assembleBtn = document.getElementById('initCardAssemble');
     if (assembleBtn) {
       assembleBtn.addEventListener('click', () => {
@@ -2811,6 +2871,22 @@
         row.className = 'initCheck ' + cls;
         const mark = data.status === 'fail' ? '✕' : data.status === 'degraded' ? '~' : data.status === 'ok' ? '✓' : '—';
         row.innerHTML = '<span>' + mark + '</span><span><b>' + escapeHtml(String(data.checkId || '')) + '</b>: ' + escapeHtml(String(data.detail || '')) + '</span>';
+      }
+    }
+    // i4-2：五维同步逐维三态 live 更新（未同步 → 同步中 → 已同步/降级；
+    // 完成后 init:sync-finished 触发 host 重拉全量卡片）
+    if (ev.type === 'init:sync-progress') {
+      const data = (ev.data && typeof ev.data === 'object') ? ev.data : {};
+      const row = initCardEl.querySelector('[data-sync-dim="' + CSS.escape(String(data.dim || '')) + '"]');
+      if (row) {
+        const st = String(data.status || '');
+        const cls = st === 'unavailable' ? 'initCheckDegraded' : st === 'synced' ? 'initCheckOk' : '';
+        const mark = st === 'unavailable' ? '~' : st === 'synced' ? '✓' : '…';
+        const label = st === 'unavailable'
+          ? '降级（' + escapeHtml(String(data.detail || '')) + '）'
+          : st === 'synced' ? '已同步' : '同步中…';
+        row.className = 'initCheck ' + cls;
+        row.innerHTML = '<span>' + mark + '</span><span>' + escapeHtml(INIT_SYNC_DIM_LABELS[String(data.dim || '')] || String(data.dim || '')) + '：' + label + '</span>';
       }
     }
   }

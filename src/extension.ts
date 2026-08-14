@@ -109,6 +109,20 @@ type InitPhaseCardPayload = {
 	} | null;
 	/** 最近一次 assemble 提交结果（成功 = 开张卡数据源；失败 = 错误行）。 */
 	assembleResult: { status: number; body: unknown } | null;
+	/** i4-2 §二.4：五维同步状态投影（daemon sync/status 端点直通；
+	 * remote = TriMC config/sync/status 拉取，不可达 = null 降级）。 */
+	syncStatus: {
+		phaseDetail: { status: string; bundleId: string | null } | null;
+		localBundleId: string | null;
+		localBundleGeneratedAt: string | null;
+		remote: {
+			reachable: boolean;
+			appliedBundleId: string | null;
+			appliedGeneratedAt: string | null;
+			fleetHead: { branch: string; commit: string } | null;
+			dims: Record<string, string> | null;
+		} | null;
+	} | null;
 };
 
 function countLinesForDiffStat(value: string): number {
@@ -3050,7 +3064,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 
 	private async fetchInitPhaseCard(): Promise<InitPhaseCardPayload> {
 		const baseUrl = this.getTrilcBaseUrl();
-		const card: InitPhaseCardPayload = { chainState: 'uninitialized', roleCatalog: null, onboardingState: null, assembleResult: null };
+		const card: InitPhaseCardPayload = { chainState: 'uninitialized', roleCatalog: null, onboardingState: null, assembleResult: null, syncStatus: null };
 		try {
 			const res = await fetch(`${baseUrl}/internal/v1/init/chain/status`);
 			if (res.ok) {
@@ -3063,6 +3077,15 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			}
 		} catch {
 			// daemon 不可达：卡片保留默认帧（chainState uninitialized → 呈现层隐藏/离线提示）
+		}
+		// i4-2 §二.4：sync/status 投影（零本地执行——只读拉取）
+		try {
+			const res = await fetch(`${baseUrl}/internal/v1/init/sync/status`);
+			if (res.ok) {
+				card.syncStatus = await res.json() as InitPhaseCardPayload['syncStatus'];
+			}
+		} catch {
+			card.syncStatus = null;
 		}
 		try {
 			const res = await fetch(`${baseUrl}/internal/v1/init/role-catalog`);
@@ -3105,6 +3128,8 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			|| eventType === 'init:selfcheck-finished'
 			|| (eventType === 'init:step-event' && (data as any)?.step === 'assembled')
 			|| (eventType === 'init:step-event' && (data as any)?.step === 'assemble-failed')
+			|| eventType === 'init:sync-finished'
+			|| eventType === 'init:sync-failed'
 		) {
 			void this.syncInitPhaseCard();
 		}
@@ -3223,6 +3248,22 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			await fetch(`${baseUrl}/internal/v1/init/selfcheck/run`, { method: 'POST' });
 		} catch {
 			// 触发失败：刷新卡片呈现现状（含错误态）
+		}
+		await this.syncInitPhaseCard();
+	}
+
+	/** 指令面（i4-2 §二.2）：POST /internal/v1/init/sync/run（五维同步；
+	 * 零本地执行——daemon 单执行体，本入口只发指令）。 */
+	private async triggerInitSync(): Promise<void> {
+		const baseUrl = this.getTrilcBaseUrl();
+		try {
+			await fetch(`${baseUrl}/internal/v1/init/sync/run`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ entry: 'tripilot' }),
+			});
+		} catch {
+			// 触发失败：刷新卡片呈现现状（sync-pending 挂起态）
 		}
 		await this.syncInitPhaseCard();
 	}
@@ -5712,6 +5753,10 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			}
 			case 'initSelfcheckRun': {
 				await this.triggerInitSelfcheck();
+				return;
+			}
+			case 'initSyncRun': {
+				await this.triggerInitSync();
 				return;
 			}
 			case 'addContext': {
