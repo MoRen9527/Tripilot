@@ -2822,7 +2822,14 @@
             ' 服务器=' + escapeHtml(short(item.server)) + '</span></div>'
           );
         }
-        // L2 dev HEAD 一致性徽标
+        // worktree 清单空集注记（三方一致判 ok，非阻塞——完备性归 I3 门禁）
+        {
+          const wtRow = ck.l1.items.find((i) => i.element === 'worktreePath');
+          if (wtRow && wtRow.status === 'ok' && !wtRow.local) {
+            blocks.push('<div class="initNote">worktree 清单为空（三方一致）— 注册完备性归 PROJECT-LINK 门禁，非阻塞</div>');
+          }
+        }
+        // L2 同线收敛徽标（i4-4 修正记录 ②：等值/互为祖先 = 同线可 ff 收敛）
         const l2Cls = ck.l2.ok ? 'initCheckOk' : (ck.degraded ? 'initCheckDegraded' : 'initCheckFail');
         const l2Mark = ck.l2.ok ? '✓' : (ck.degraded ? '~' : '✕');
         blocks.push(
@@ -2830,6 +2837,9 @@
           escapeHtml(short(ck.l2.localHead)) + ' bundle=' + escapeHtml(short(ck.l2.bundleHead)) +
           ' 服务器=' + escapeHtml(short(ck.l2.fleetHead)) + '</span></div>'
         );
+        if (ck.l2.ok && ck.l2.localHead !== ck.l2.fleetHead) {
+          blocks.push('<div class="initNote">本地与服务器同线（ff 收敛可达）— 落后/领先仅提示，不阻断</div>');
+        }
         // L3 写读闭环（未 applied = 未就绪 + 重试提示）
         const l3Cls = ck.l3.ok ? 'initCheckOk' : 'initCheckDegraded';
         blocks.push(
@@ -2854,7 +2864,7 @@
         }
         if (!ck.l2.ok) {
           blocks.push(
-            '<div class="initCheck initCheckFail"><span>✕</span><span>差异：dev HEAD 不一致 — 诊断：重新同步（SYNC sync/run）；服务器落后 = fleet 每 15min 收敛</span></div>'
+            '<div class="initCheck initCheckFail"><span>✕</span><span>差异：dev HEAD 不同线 — 诊断：先 git pull --ff-only 对齐后刷新复核；仍红 = 分叉，勿确认（人工处置）</span></div>'
           );
         }
         if (!ck.l3.ok) {
