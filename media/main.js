@@ -2800,6 +2800,74 @@
       }
     }
 
+    // ── CONFIRM 协同确认卡（i4-2 Phase D §六.3：三元素同显 + HEAD 徽标 +
+    // 红差异 + 诊断入口 + 未就绪提示；零本地执行——只渲染 + 发 daemon 指令）──
+    if (cs === 'confirm') {
+      const ck = card.confirmStatus || null;
+      const short = (s) => (typeof s === 'string' && s.length > 20 ? String(s).slice(0, 8) + '…' : (s || '—'));
+      const L1_LABELS = { repoUrl: '仓库 URL', projectKey: '项目 key', worktreePath: 'worktree 指纹' };
+      if (!ck) {
+        blocks.push('<div class="initCheck initCheckDegraded">确认检查不可用（daemon confirm/check 未就绪）— 点击刷新重试</div>');
+      } else {
+        // L1 三元素同显（三方同显：本地注册点 / bundle / 服务器）
+        blocks.push('<div class="initCheck"><b>L1 注册同一性</b></div>');
+        for (const item of ck.l1.items) {
+          const okCls = item.status === 'ok' ? 'initCheckOk' : 'initCheckFail';
+          const mark = item.status === 'ok' ? '✓' : '✕';
+          blocks.push(
+            '<div class="initCheck ' + okCls + '"><span>' + mark + '</span><span>' +
+            escapeHtml(L1_LABELS[item.element] || item.element) +
+            '：本地=' + escapeHtml(short(item.local)) +
+            ' bundle=' + escapeHtml(short(item.bundle)) +
+            ' 服务器=' + escapeHtml(short(item.server)) + '</span></div>'
+          );
+        }
+        // L2 dev HEAD 一致性徽标
+        const l2Cls = ck.l2.ok ? 'initCheckOk' : (ck.degraded ? 'initCheckDegraded' : 'initCheckFail');
+        const l2Mark = ck.l2.ok ? '✓' : (ck.degraded ? '~' : '✕');
+        blocks.push(
+          '<div class="initCheck ' + l2Cls + '"><span>' + l2Mark + '</span><span>L2 版本一致：本地=' +
+          escapeHtml(short(ck.l2.localHead)) + ' bundle=' + escapeHtml(short(ck.l2.bundleHead)) +
+          ' 服务器=' + escapeHtml(short(ck.l2.fleetHead)) + '</span></div>'
+        );
+        // L3 写读闭环（未 applied = 未就绪 + 重试提示）
+        const l3Cls = ck.l3.ok ? 'initCheckOk' : 'initCheckDegraded';
+        blocks.push(
+          '<div class="initCheck ' + l3Cls + '"><span>' + (ck.l3.ok ? '✓' : '…') + '</span><span>L3 写读闭环：applied=' +
+          escapeHtml(short(ck.l3.appliedBundleId)) + ' 本地=' + escapeHtml(short(ck.l3.localBundleId)) +
+          (ck.l3.ok ? '' : '（未就绪）') + '</span></div>'
+        );
+        blocks.push('<div class="initCheck"><span>—</span><span>L4 反向闭环：' + escapeHtml(ck.l4.note) + '</span></div>');
+        if (ck.degraded) {
+          blocks.push('<div class="initNote">服务器不可达（降级口径）— L2/L3 服务器侧事实待恢复后复核</div>');
+        }
+        // 红差异提示 + 诊断入口（哪端、什么元素、期望 vs 实际）
+        for (const item of ck.l1.items) {
+          if (item.status !== 'ok') {
+            blocks.push(
+              '<div class="initCheck initCheckFail"><span>✕</span><span>差异：' +
+              escapeHtml(L1_LABELS[item.element] || item.element) + ' 三面不一致（本地=' +
+              escapeHtml(short(item.local)) + '，bundle=' + escapeHtml(short(item.bundle)) +
+              '，服务器=' + escapeHtml(short(item.server)) + '）— 诊断：重新登记（PROJECT-LINK link/claim）</span></div>'
+            );
+          }
+        }
+        if (!ck.l2.ok) {
+          blocks.push(
+            '<div class="initCheck initCheckFail"><span>✕</span><span>差异：dev HEAD 不一致 — 诊断：重新同步（SYNC sync/run）；服务器落后 = fleet 每 15min 收敛</span></div>'
+          );
+        }
+        if (!ck.l3.ok) {
+          blocks.push('<div class="initCheck">未就绪：服务器尚未 applied — fleet 每 15min 收敛，刷新重试</div>');
+        }
+        // 确认按钮（readyForConfirm 门禁；未达 = 禁用 + 提示）
+        blocks.push(
+          '<div class="initCardActions"><button id="initCardConfirm"' + (ck.readyForConfirm ? '' : ' disabled') + '>' +
+          (ck.readyForConfirm ? '确认开启协同' : '确认开启协同（未达门禁）') + '</button></div>'
+        );
+      }
+    }
+
     // ── assemble 提交结果行 ──
     const res = card.assembleResult;
     if (res) {
@@ -2828,6 +2896,8 @@
     if (runBtn) runBtn.addEventListener('click', () => uiAction('initSelfcheckRun'));
     const syncBtn = document.getElementById('initCardRunSync');
     if (syncBtn) syncBtn.addEventListener('click', () => uiAction('initSyncRun'));
+    const confirmBtn = document.getElementById('initCardConfirm');
+    if (confirmBtn) confirmBtn.addEventListener('click', () => uiAction('initConfirm'));
     const assembleBtn = document.getElementById('initCardAssemble');
     if (assembleBtn) {
       assembleBtn.addEventListener('click', () => {
