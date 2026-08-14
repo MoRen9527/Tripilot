@@ -20,7 +20,9 @@ type WebviewInboundMessage =
 	| { type: 'editApprovalAction'; requestId: string; action: 'preview' | 'apply' | 'cancel' }
 	| { type: 'editReviewAction'; requestId: string; action: 'preview' | 'undo' | 'keep' }
 	| { type: 'checkpointAction'; checkpointId: string; action: 'restore' | 'redo'; redoToken?: string }
-	| { type: 'uiAction'; action: string; payload?: any; clientTs?: number };
+	| { type: 'uiAction'; action: string; payload?: any; clientTs?: number }
+	// i2-2 §四.1：初始化阶段卡指令面（零本地执行——只发 daemon 指令）
+	| { type: 'initAssemble'; ceoName: string; selections: Array<{ roleId: string; name: string }> };
 
 type WebviewOutboundMessage =
 	| { type: 'init'; extensionName: string }
@@ -74,7 +76,40 @@ type WebviewOutboundMessage =
 	| { type: 'editReviewClear'; requestId: string }
 	// W30 S5: TriLC daemon status and session list
 	| { type: 'triLcStatus'; status: 'online' | 'offline' | 'fallback'; detail?: string }
-	| { type: 'sessionList'; sessions: Array<{ id: string; title?: string; status: string; progress?: { step: number; totalSteps: number; description: string }; updatedAt: string }> };
+	| { type: 'sessionList'; sessions: Array<{ id: string; title?: string; status: string; progress?: { step: number; totalSteps: number; description: string }; updatedAt: string }> }
+	// i2-2 §四.1：初始化阶段卡（数据面 = chain/status + role-catalog + onboarding/state）
+	| { type: 'initPhaseCard'; card: InitPhaseCardPayload }
+	| { type: 'initEvent'; event: { type: string; data: unknown } };
+
+/** 初始化阶段卡载荷（i2-2 §四.1；呈现层组合规则：blocked 置顶 + trimodel blocked
+ * 且 plane-hint ok 注记「问周面冒烟绿 ≠ 模型链可用」由 webview 呈现层执行）。 */
+type InitPhaseCardPayload = {
+	chainState: string;
+	selfcheck?: {
+		runId: string | null;
+		summary: 'pass' | 'degraded' | 'blocked' | null;
+		checks: Array<{ id: string; status: string; detail: string; hint: string }>;
+		finishedAt: string | null;
+		retryCount: number;
+	};
+	roleCatalog: Array<{
+		roleId: string;
+		roleName: string;
+		oneLinePositioning: string;
+		isGovernance: boolean;
+		defaultSelected: boolean;
+	}> | null;
+	onboardingState: {
+		state: string;
+		ceoName: string | null;
+		employees: Array<{ role: string; name: string }>;
+		step: string | null;
+		selectedRoles: string[];
+		employeeNames: Record<string, string>;
+	} | null;
+	/** 最近一次 assemble 提交结果（成功 = 开张卡数据源；失败 = 错误行）。 */
+	assembleResult: { status: number; body: unknown } | null;
+};
 
 function countLinesForDiffStat(value: string): number {
 	if (!value) return 0;
@@ -2994,8 +3029,202 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 						state.replayCadenceTimer = undefined;
 					}
 				}
+				this.stopInitEventsSubscription();
 			}
 		});
+	}
+
+	// ── 初始化阶段卡（i2-2 §四.1）──
+	// 数据面 = chain/status 首拉 + init/events SSE 订阅（daemon 级通道，
+	// 无重放缓冲——断连重连 = 重拉 status）+ role-catalog + onboarding/state。
+	// 指令面 = assemble 提交 / selfcheck 触发。零本地执行：本 provider 不写
+	// 文件、不执行装配/探测——只渲染 + 发 daemon 端点指令。
+
+	private initEventsReq: http.ClientRequest | undefined;
+	private initEventsReconnectTimer: NodeJS.Timeout | undefined;
+	private initEventsSubscribed = false;
+
+	private getTrilcBaseUrl(): string {
+		return String(this.getTrilcConfig().baseUrl ?? '').trim() || 'http://127.0.0.1:8711';
+	}
+
+	private async fetchInitPhaseCard(): Promise<InitPhaseCardPayload> {
+		const baseUrl = this.getTrilcBaseUrl();
+		const card: InitPhaseCardPayload = { chainState: 'uninitialized', roleCatalog: null, onboardingState: null, assembleResult: null };
+		try {
+			const res = await fetch(`${baseUrl}/internal/v1/init/chain/status`);
+			if (res.ok) {
+				const json = await res.json() as { chainState?: string; phaseDetail?: InitPhaseCardPayload['selfcheck'] & { selfcheck?: InitPhaseCardPayload['selfcheck'] } };
+				card.chainState = String(json?.chainState ?? 'uninitialized');
+				const detail = (json as any)?.phaseDetail;
+				if (detail && typeof detail === 'object' && detail.selfcheck) {
+					card.selfcheck = detail.selfcheck;
+				}
+			}
+		} catch {
+			// daemon 不可达：卡片保留默认帧（chainState uninitialized → 呈现层隐藏/离线提示）
+		}
+		try {
+			const res = await fetch(`${baseUrl}/internal/v1/init/role-catalog`);
+			if (res.ok) {
+				const json = await res.json() as { roles?: InitPhaseCardPayload['roleCatalog'] };
+				card.roleCatalog = Array.isArray(json?.roles) ? json.roles : null;
+			}
+		} catch {
+			card.roleCatalog = null;
+		}
+		try {
+			const res = await fetch(`${baseUrl}/internal/v1/init/onboarding/state`);
+			if (res.ok) {
+				card.onboardingState = await res.json() as InitPhaseCardPayload['onboardingState'];
+			}
+		} catch {
+			card.onboardingState = null;
+		}
+		return card;
+	}
+
+	private postInitPhaseCard(card: InitPhaseCardPayload): void {
+		for (const state of Object.values(this.hostStates)) {
+			this.postToHost(state, { type: 'initPhaseCard', card } as any);
+		}
+	}
+
+	private async syncInitPhaseCard(): Promise<void> {
+		const card = await this.fetchInitPhaseCard();
+		this.postInitPhaseCard(card);
+	}
+
+	private broadcastInitEvent(eventType: string, data: unknown): void {
+		for (const state of Object.values(this.hostStates)) {
+			this.postToHost(state, { type: 'initEvent', event: { type: eventType, data } } as any);
+		}
+		// 状态帧事件 → 重拉快照（无重放缓冲口径：事件流 = 状态文件投影）
+		if (
+			eventType === 'init:chain-changed'
+			|| eventType === 'init:selfcheck-finished'
+			|| (eventType === 'init:step-event' && (data as any)?.step === 'assembled')
+			|| (eventType === 'init:step-event' && (data as any)?.step === 'assemble-failed')
+		) {
+			void this.syncInitPhaseCard();
+		}
+	}
+
+	private stopInitEventsSubscription(): void {
+		this.initEventsSubscribed = false;
+		if (this.initEventsReconnectTimer) {
+			clearTimeout(this.initEventsReconnectTimer);
+			this.initEventsReconnectTimer = undefined;
+		}
+		try {
+			this.initEventsReq?.destroy();
+		} catch {
+			// ignore
+		}
+		this.initEventsReq = undefined;
+	}
+
+	private ensureInitEventsSubscription(): void {
+		if (this.initEventsSubscribed) return;
+		this.initEventsSubscribed = true;
+
+		const connect = () => {
+			if (!this.initEventsSubscribed) return;
+			const baseUrl = this.getTrilcBaseUrl();
+			let buffer = '';
+			let watchdog: NodeJS.Timeout | undefined;
+			const resetWatchdog = () => {
+				if (watchdog) clearTimeout(watchdog);
+				// daemon 25s ping；70s 无数据 = 连接僵死 → 重建
+				watchdog = setTimeout(() => {
+					try { req.destroy(); } catch { /* ignore */ }
+				}, 70_000);
+			};
+			const req = http.request(`${baseUrl}/internal/v1/init/events`, {
+				headers: { accept: 'text/event-stream' },
+			}, (res) => {
+				res.setEncoding('utf-8');
+				resetWatchdog();
+				res.on('data', (chunk: string) => {
+					resetWatchdog();
+					buffer += chunk;
+					const parts = buffer.split(/\r?\n\r?\n/);
+					buffer = parts.pop() ?? '';
+					for (const block of parts) {
+						let eventType = '';
+						const dataLines: string[] = [];
+						for (const line of block.split(/\r?\n/)) {
+							if (line.startsWith('event:')) eventType = line.slice(6).trim();
+							else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+						}
+						if (!eventType) continue;
+						let data: unknown = dataLines.join('\n');
+						if (dataLines.length > 0) {
+							try { data = JSON.parse(dataLines.join('\n')); } catch { /* keep raw string */ }
+						}
+						this.broadcastInitEvent(eventType, data);
+					}
+				});
+				res.on('end', () => {
+					if (watchdog) clearTimeout(watchdog);
+					this.scheduleInitEventsReconnect();
+				});
+				res.on('error', () => {
+					if (watchdog) clearTimeout(watchdog);
+					this.scheduleInitEventsReconnect();
+				});
+			});
+			req.on('error', () => {
+				this.scheduleInitEventsReconnect();
+			});
+			req.end();
+			this.initEventsReq = req;
+		};
+		connect();
+	}
+
+	private scheduleInitEventsReconnect(): void {
+		if (!this.initEventsSubscribed) return;
+		if (this.initEventsReconnectTimer) return;
+		this.initEventsReconnectTimer = setTimeout(() => {
+			this.initEventsReconnectTimer = undefined;
+			this.ensureInitEventsSubscription();
+		}, 5_000);
+	}
+
+	/** 指令面：POST /internal/v1/init/assemble（entry=tripilot），结果经卡片回传。 */
+	private async submitInitAssemble(ceoName: string, selections: Array<{ roleId: string; name: string }>): Promise<void> {
+		const baseUrl = this.getTrilcBaseUrl();
+		const result: { status: number; body: unknown } = { status: 0, body: { error: 'unreachable' } };
+		try {
+			const res = await fetch(`${baseUrl}/internal/v1/init/assemble`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ ceoName, selections, entry: 'tripilot' }),
+			});
+			const text = await res.text();
+			let body: unknown = text;
+			try { body = JSON.parse(text); } catch { /* keep raw */ }
+			result.status = res.status;
+			result.body = body;
+		} catch (err) {
+			result.status = 0;
+			result.body = { error: (err as Error).message };
+		}
+		const card = await this.fetchInitPhaseCard();
+		card.assembleResult = result;
+		this.postInitPhaseCard(card);
+	}
+
+	/** 指令面：POST /internal/v1/init/selfcheck/run（触发五探测）。 */
+	private async triggerInitSelfcheck(): Promise<void> {
+		const baseUrl = this.getTrilcBaseUrl();
+		try {
+			await fetch(`${baseUrl}/internal/v1/init/selfcheck/run`, { method: 'POST' });
+		} catch {
+			// 触发失败：刷新卡片呈现现状（含错误态）
+		}
+		await this.syncInitPhaseCard();
 	}
 
 	private scheduleSessionsRefresh(delayMs = 250): void {
@@ -4668,6 +4897,9 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 				/* v0.1 removed: askStudy sandbox init */
 				// W30 S5: Check TriLC daemon health and auto-reconnect active sessions
 				void this.checkTriLCStatusAndReconnect(state);
+				// i2-2 §四.1：初始化阶段卡（首拉 + SSE 订阅；daemon 不可达时静默）
+				void this.syncInitPhaseCard();
+				this.ensureInitEventsSubscription();
 				// If this host was opened via "move to editor", replay the pinned session/transcript.
 				const didReplayOnReady = Boolean(state.replayOnReady);
 				if (state.replayOnReady) {
@@ -4748,6 +4980,13 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 				break;
 			case 'checkpointAction':
 				await this.handleCheckpointAction(state, msg);
+				break;
+			case 'initAssemble':
+				// i2-2 §四.1 指令面：只发 daemon 指令，零本地执行
+				await this.submitInitAssemble(
+					String(msg.ceoName ?? '').trim(),
+					Array.isArray(msg.selections) ? msg.selections : [],
+				);
 				break;
 			case 'uiAction':
 				if (isSettingsPerfEnabled()) {
@@ -5466,6 +5705,15 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 
 	private async handleUiAction(state: ChatHostState, action: string, payload: any) {
 		switch (action) {
+			// i2-2 §四.1：初始化阶段卡指令面（零本地执行）
+			case 'initRefresh': {
+				await this.syncInitPhaseCard();
+				return;
+			}
+			case 'initSelfcheckRun': {
+				await this.triggerInitSelfcheck();
+				return;
+			}
 			case 'addContext': {
 				await this.addContextInteractive(state);
 				return;
@@ -6498,6 +6746,8 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			</div>
 		</div>
 		<div class="messages" id="messages" role="log" aria-live="polite"></div>
+		<!-- i2-2 §四.1：初始化阶段卡（A1 阶段卡可见；呈现层组合规则在 main.js 执行） -->
+		<div class="initCard hidden" id="initCard" role="region" aria-label="初始化阶段卡"></div>
 		<div class="composer">
 			<div class="composerBox">
 				<div class="composerTop">

@@ -126,6 +126,7 @@
   const inputEl = document.getElementById('input');
   const sendEl = document.getElementById('send');
   const statusEl = document.getElementById('status');
+  const initCardEl = document.getElementById('initCard');
 
   // --- DOM references (must be declared; optional chaining doesn't help undeclared identifiers) ---
   // Topbar
@@ -2626,11 +2627,205 @@
   updateContinueButton();
   updateComposerTokensPresence();
 
+  // ── Init phase card（i2-2 §四.1：A1 阶段卡可见；呈现层组合规则）──
+  // blocked 行置顶 + trimodel blocked 且 plane-hint ok 时注记
+  // 「问周面冒烟绿 ≠ 模型链可用」（双面真相语义不互抵）。
+  // 零本地执行：本呈现层只渲染 + 发 daemon 指令（initAssemble / initRefresh /
+  // initSelfcheckRun），不写文件、不执行装配。
+  let initCardPayload = null;
+  const INIT_PHASE_LABEL = {
+    selfcheck: 'SELFCHECK · 安装态自检',
+    onboarding: 'ONBOARDING · 公司开张',
+    'project-link': 'PROJECT-LINK · 项目面初始化',
+    sync: 'SYNC · 五维同步',
+    confirm: 'CONFIRM · 协同确认'
+  };
+  const INIT_PHASE_STATES = ['selfcheck', 'onboarding', 'project-link', 'sync', 'confirm'];
+
+  function initCardVisible() {
+    return !!initCardPayload && INIT_PHASE_STATES.includes(String(initCardPayload.chainState || ''));
+  }
+
+  function renderInitCard(card) {
+    initCardPayload = card;
+    if (!initCardEl) return;
+    const cs = String(card.chainState || '');
+    if (!INIT_PHASE_STATES.includes(cs)) {
+      initCardEl.classList.add('hidden');
+      initCardEl.innerHTML = '';
+      return;
+    }
+    initCardEl.classList.remove('hidden');
+
+    const sc = card.selfcheck || null;
+    const selfcheckDone = !!sc && (sc.summary === 'pass' || sc.summary === 'degraded');
+    const onboarding = card.onboardingState || null;
+    const blocks = [];
+    blocks.push(
+      '<div class="initCardTitle"><span>' + escapeHtml(INIT_PHASE_LABEL[cs] || cs) + '</span>' +
+      '<button class="ghost" id="initCardRefresh" title="刷新">↻ 刷新</button></div>'
+    );
+
+    // ── SELFCHECK 诊断卡（未完结时）：blocked 置顶排序 ──
+    if (cs === 'selfcheck' && !selfcheckDone) {
+      const checks = (sc && Array.isArray(sc.checks)) ? sc.checks : [];
+      const order = { fail: 0, degraded: 1, ok: 2, skipped: 3 };
+      const sorted = checks.slice().sort((a, b) => (order[a.status] ?? 4) - (order[b.status] ?? 4));
+      if (!sorted.length) {
+        blocks.push('<div class="initCheck">自检未运行。</div>');
+      } else {
+        for (const c of sorted) {
+          const cls = c.status === 'fail' ? 'initCheckFail' : c.status === 'degraded' ? 'initCheckDegraded' : c.status === 'ok' ? 'initCheckOk' : '';
+          const mark = c.status === 'fail' ? '✕' : c.status === 'degraded' ? '~' : c.status === 'ok' ? '✓' : '—';
+          const hint = c.hint ? ' — ' + escapeHtml(c.hint) : '';
+          blocks.push(
+            '<div class="initCheck ' + cls + '" data-check="' + escapeHtml(c.id) + '"><span>' + mark + '</span>' +
+            '<span><b>' + escapeHtml(c.id) + '</b>: ' + escapeHtml(c.detail) + hint + '</span></div>'
+          );
+        }
+        const trimodel = checks.find((c) => c.id === 'trimodel');
+        const planeHint = checks.find((c) => c.id === 'plane-hint-probe');
+        if (trimodel && trimodel.status === 'fail' && planeHint && planeHint.status === 'ok') {
+          blocks.push(
+            '<div class="initNote">注记：问周面冒烟绿 ≠ 模型链可用（trimodel 认证面 blocked 时任务链路仍可能经 TriModel 转发可用，以第五探测为准）</div>'
+          );
+        }
+        const summaryMark = sc.summary === 'blocked'
+          ? '<span class="initCheckFail">blocked</span>'
+          : sc.summary === 'degraded' ? '<span class="initCheckDegraded">degraded</span>' : '<span class="initCheckOk">pass</span>';
+        blocks.push('<div class="initCheck">summary：' + summaryMark + '</div>');
+      }
+      blocks.push('<div class="initCardActions"><button id="initCardRunSelfcheck">' + (sorted && sorted.length ? '重新自检' : '发起自检') + '</button></div>');
+    }
+
+    // ── 公司开张选择面（ONBOARDING 或 SELFCHECK 已完结）──
+    if (cs === 'onboarding' || (cs === 'selfcheck' && selfcheckDone)) {
+      const roles = Array.isArray(card.roleCatalog) ? card.roleCatalog : [];
+      if (!roles.length) {
+        blocks.push('<div class="initCheck initCheckDegraded">岗位目录不可用（daemon role-catalog 503）— 点击刷新重试</div>');
+      } else {
+        const savedSel = onboarding && Array.isArray(onboarding.selectedRoles) && onboarding.selectedRoles.length
+          ? onboarding.selectedRoles
+          : null;
+        const names = (onboarding && onboarding.employeeNames) || {};
+        blocks.push(
+          '<div class="initField"><label>CEO 名字</label>' +
+          '<input id="initCeoName" value="' + escapeHtml(onboarding && onboarding.ceoName ? onboarding.ceoName : '') + '" placeholder="您的名字（公司 CEO）" /></div>'
+        );
+        blocks.push('<div class="initCheck">选择启用岗位（推荐至少 5 岗，含治理角色；≥1 岗可开张）：</div>');
+        for (const r of roles) {
+          const checked = savedSel ? savedSel.includes(r.roleId) : !!r.defaultSelected;
+          blocks.push(
+            '<label class="initRoleRow"><input type="checkbox" class="initRoleCheck" data-role="' + escapeHtml(r.roleId) + '"' + (checked ? ' checked' : '') + ' />' +
+            '<span><b>' + escapeHtml(r.roleName) + '</b>' + (r.isGovernance ? '（治理）' : '') + (r.defaultSelected ? ' *默认' : '') +
+            ' — ' + escapeHtml(r.oneLinePositioning) + '</span></label>'
+          );
+          blocks.push(
+            '<div class="initField initRoleName" data-role-name="' + escapeHtml(r.roleId) + '">' +
+            '<input class="initRoleNameInput" data-role-input="' + escapeHtml(r.roleId) + '" value="' + escapeHtml(names[r.roleId] || '') + '" placeholder="员工名字" /></div>'
+          );
+        }
+        blocks.push('<div class="initCardActions"><button id="initCardAssemble">确认开张</button><div id="initCardFormError" class="initCheckFail"></div></div>');
+      }
+    }
+
+    // ── 开张卡（A2 完成判据 = CEO 名 + 员工名单可回看）：project-link 起常驻 ──
+    if (cs === 'project-link' || cs === 'sync' || cs === 'confirm') {
+      if (onboarding && onboarding.ceoName && Array.isArray(onboarding.employees) && onboarding.employees.length) {
+        blocks.push('<div class="initCheck initCheckOk">公司已开张 ✓</div>');
+        blocks.push('<div class="initCheck"><b>CEO</b>：' + escapeHtml(onboarding.ceoName) + '</div>');
+        for (const e of onboarding.employees) {
+          blocks.push('<div class="initCheck">- ' + escapeHtml(e.role) + '：' + escapeHtml(e.name) + '</div>');
+        }
+      } else {
+        blocks.push('<div class="initCheck">当前阶段：' + escapeHtml(INIT_PHASE_LABEL[cs] || cs) + ' — 由后续流程承接。</div>');
+      }
+    }
+
+    // ── assemble 提交结果行 ──
+    const res = card.assembleResult;
+    if (res) {
+      const body = (res.body && typeof res.body === 'object') ? res.body : {};
+      if (res.status === 200) {
+        blocks.push('<div class="initCheck initCheckOk">开张完成 ✓（chainState=project-link）</div>');
+        if (body.warning) blocks.push('<div class="initCheck initCheckDegraded">提示：当前 ' + body.warning.current + ' 岗（推荐至少 ' + body.warning.recommendedMin + ' 岗，可选）</div>');
+        if (body.preserved && body.preserved.length) blocks.push('<div class="initCheck">保留既有文件：' + escapeHtml(body.preserved.join(', ')) + '</div>');
+      } else if (res.status === 409 && body.busy) {
+        blocks.push('<div class="initCheck initCheckDegraded">装配进行中（单执行体互斥）— 稍后重试同一载荷</div>');
+      } else if (res.status === 422) {
+        blocks.push('<div class="initCheck initCheckFail">当前链路状态不允许装配（' + escapeHtml(String(body.chainState || '?')) + '）</div>');
+      } else if (res.status === 500 && body.retryable) {
+        blocks.push('<div class="initCheck initCheckDegraded">装配提交段失败（可重试）：' + escapeHtml(String(body.error || '')) + ' — 重新提交同一载荷即续跑</div>');
+      } else {
+        const errText = body.message || body.error || 'unknown';
+        blocks.push('<div class="initCheck initCheckFail">装配失败（http ' + res.status + '）：' + escapeHtml(String(errText)) + '</div>');
+      }
+    }
+
+    initCardEl.innerHTML = blocks.join('');
+
+    const refreshBtn = document.getElementById('initCardRefresh');
+    if (refreshBtn) refreshBtn.addEventListener('click', () => uiAction('initRefresh'));
+    const runBtn = document.getElementById('initCardRunSelfcheck');
+    if (runBtn) runBtn.addEventListener('click', () => uiAction('initSelfcheckRun'));
+    const assembleBtn = document.getElementById('initCardAssemble');
+    if (assembleBtn) {
+      assembleBtn.addEventListener('click', () => {
+        const formErrorEl = document.getElementById('initCardFormError');
+        if (formErrorEl) formErrorEl.textContent = '';
+        const ceoName = String((document.getElementById('initCeoName') || {}).value || '').trim();
+        const roles = Array.isArray(initCardPayload && initCardPayload.roleCatalog) ? initCardPayload.roleCatalog : [];
+        const selections = [];
+        for (const check of Array.from(document.querySelectorAll('.initRoleCheck'))) {
+          if (!check.checked) continue;
+          const roleId = String(check.getAttribute('data-role') || '');
+          const nameEl = document.querySelector('[data-role-input="' + roleId + '"]');
+          const name = String((nameEl && nameEl.value) || '').trim();
+          selections.push({ roleId, name });
+          if (!name) {
+            if (formErrorEl) formErrorEl.textContent = '员工名字必填：' + roleId;
+            return;
+          }
+        }
+        if (!ceoName) {
+          if (formErrorEl) formErrorEl.textContent = 'CEO 名字必填';
+          return;
+        }
+        if (selections.length < 1) {
+          if (formErrorEl) formErrorEl.textContent = '至少选择 1 个岗位（A4 0 人拦截）';
+          return;
+        }
+        vscode.postMessage({ type: 'initAssemble', ceoName, selections });
+      });
+    }
+  }
+
+  function onInitEvent(ev) {
+    if (!ev || !initCardVisible()) return;
+    // selfcheck 运行中的逐项进度：live 更新诊断卡行（完成后 host 会重拉全量卡片）
+    if (ev.type === 'init:selfcheck-progress') {
+      const data = (ev.data && typeof ev.data === 'object') ? ev.data : {};
+      const row = initCardEl.querySelector('[data-check="' + CSS.escape(String(data.checkId || '')) + '"]');
+      if (row) {
+        const cls = data.status === 'fail' ? 'initCheckFail' : data.status === 'degraded' ? 'initCheckDegraded' : data.status === 'ok' ? 'initCheckOk' : '';
+        row.className = 'initCheck ' + cls;
+        const mark = data.status === 'fail' ? '✕' : data.status === 'degraded' ? '~' : data.status === 'ok' ? '✓' : '—';
+        row.innerHTML = '<span>' + mark + '</span><span><b>' + escapeHtml(String(data.checkId || '')) + '</b>: ' + escapeHtml(String(data.detail || '')) + '</span>';
+      }
+    }
+  }
+
   window.addEventListener('message', (event) => {
     const msg = event.data;
     switch (msg.type) {
       case 'init':
         // noop
+        return;
+      case 'initPhaseCard':
+        renderInitCard(msg.card);
+        return;
+      case 'initEvent':
+        onInitEvent(msg.event);
         return;
       case 'chatReset':
         if (messagesEl) messagesEl.innerHTML = '';

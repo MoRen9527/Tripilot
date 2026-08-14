@@ -1723,3 +1723,32 @@ button.ghost {
   display: block;
   padding: 0 10px 8px 10px;
 }
+
+/* ── Init phase card (i2-2 §四.1) ── */
+.initCard {
+  margin: 0 10px 10px 10px;
+  border: 1px solid var(--vscode-input-border, rgba(128,128,128,0.4));
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--vscode-editorWidget-background, transparent);
+  max-height: 42vh;
+  overflow-y: auto;
+}
+.initCard.hidden { display: none; }
+.initCardTitle { font-weight: 600; margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.initCheck { padding: 2px 0; word-break: break-word; }
+.initCheckFail { color: var(--vscode-errorForeground, #f48771); }
+.initCheckDegraded { color: var(--vscode-editorWarning-foreground, #cca700); }
+.initCheckOk { color: var(--vscode-testing-iconPassed, #73c991); }
+.initNote { margin: 6px 0; padding: 6px 8px; border-left: 3px solid var(--vscode-editorWarning-foreground, #cca700); background: var(--vscode-editorWarning-background, rgba(204,167,0,0.08)); }
+.initField { margin: 4px 0; }
+.initField input { width: 100%; box-sizing: border-box; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); border-radius: 2px; padding: 4px 6px; font-size: 12px; }
+.initRoleRow { display: flex; gap: 6px; align-items: flex-start; padding: 3px 0; cursor: pointer; }
+.initRoleRow input { margin-top: 2px; }
+.initRoleName { margin: 0 0 2px 22px; }
+.initCardActions { display: flex; gap: 8px; margin-top: 8px; }
+.initCardActions button { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 2px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+.initCardActions button:hover { background: var(--vscode-button-hoverBackground); }
+.initCardActions button.ghost { background: transparent; color: var(--vscode-foreground); border: 1px solid var(--vscode-input-border, transparent); }
