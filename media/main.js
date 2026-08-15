@@ -2688,7 +2688,7 @@
       const order = { fail: 0, degraded: 1, ok: 2, skipped: 3 };
       const sorted = checks.slice().sort((a, b) => (order[a.status] ?? 4) - (order[b.status] ?? 4));
       if (!sorted.length) {
-        blocks.push('<div class="initCheck">自检未运行。</div>');
+        blocks.push('<div class="initCheck">' + (selfcheckRunning ? '自检进行中…（五探测逐项执行，约 1-2 分钟）' : '自检未运行。') + '</div>');
       } else {
         for (const c of sorted) {
           const cls = c.status === 'fail' ? 'initCheckFail' : c.status === 'degraded' ? 'initCheckDegraded' : c.status === 'ok' ? 'initCheckOk' : '';

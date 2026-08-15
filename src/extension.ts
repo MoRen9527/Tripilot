@@ -3080,7 +3080,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		const baseUrl = this.getTrilcBaseUrl();
 		const card: InitPhaseCardPayload = { chainState: 'uninitialized', roleCatalog: null, onboardingState: null, assembleResult: null, syncStatus: null, confirmStatus: null };
 		try {
-			const res = await fetch(`${baseUrl}/internal/v1/init/chain/status`);
+			const res = await fetch(`${baseUrl}/internal/v1/init/chain/status`, { signal: AbortSignal.timeout(8_000) });
 			if (res.ok) {
 				const json = await res.json() as { chainState?: string; phaseDetail?: InitPhaseCardPayload['selfcheck'] & { selfcheck?: InitPhaseCardPayload['selfcheck'] }; debugMode?: boolean; canReset?: boolean };
 				card.chainState = String(json?.chainState ?? 'uninitialized');
@@ -3097,7 +3097,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		}
 		// i4-2 §二.4：sync/status 投影（零本地执行——只读拉取）
 		try {
-			const res = await fetch(`${baseUrl}/internal/v1/init/sync/status`);
+			const res = await fetch(`${baseUrl}/internal/v1/init/sync/status`, { signal: AbortSignal.timeout(8_000) });
 			if (res.ok) {
 				card.syncStatus = await res.json() as InitPhaseCardPayload['syncStatus'];
 			}
@@ -3106,7 +3106,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		}
 		// i4-2 Phase D §六.1：confirm/check 投影（L1-L4；零本地执行——只读拉取）
 		try {
-			const res = await fetch(`${baseUrl}/internal/v1/init/confirm/check`);
+			const res = await fetch(`${baseUrl}/internal/v1/init/confirm/check`, { signal: AbortSignal.timeout(8_000) });
 			if (res.ok) {
 				card.confirmStatus = await res.json() as InitPhaseCardPayload['confirmStatus'];
 			}
@@ -3114,7 +3114,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			card.confirmStatus = null;
 		}
 		try {
-			const res = await fetch(`${baseUrl}/internal/v1/init/role-catalog`);
+			const res = await fetch(`${baseUrl}/internal/v1/init/role-catalog`, { signal: AbortSignal.timeout(8_000) });
 			if (res.ok) {
 				const json = await res.json() as { roles?: InitPhaseCardPayload['roleCatalog'] };
 				card.roleCatalog = Array.isArray(json?.roles) ? json.roles : null;
@@ -3123,7 +3123,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			card.roleCatalog = null;
 		}
 		try {
-			const res = await fetch(`${baseUrl}/internal/v1/init/onboarding/state`);
+			const res = await fetch(`${baseUrl}/internal/v1/init/onboarding/state`, { signal: AbortSignal.timeout(8_000) });
 			if (res.ok) {
 				card.onboardingState = await res.json() as InitPhaseCardPayload['onboardingState'];
 			}
