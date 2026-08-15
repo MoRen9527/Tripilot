@@ -2633,6 +2633,8 @@
   // 零本地执行：本呈现层只渲染 + 发 daemon 指令（initAssemble / initRefresh /
   // initSelfcheckRun），不写文件、不执行装配。
   let initCardPayload = null;
+  // 2026-08-15：自检运行态（局部记忆——progress 事件重拉渲染不冲掉按钮 loading 态）
+  let selfcheckRunning = false;
   const INIT_PHASE_LABEL = {
     selfcheck: 'SELFCHECK · 安装态自检',
     onboarding: 'ONBOARDING · 公司开张',
@@ -2657,6 +2659,11 @@
 
   function renderInitCard(card) {
     initCardPayload = card;
+    // 2026-08-15：探测已完结（有 summary）或链态已离开 selfcheck → 清运行态
+    if (selfcheckRunning) {
+      const scSnap = card && card.selfcheck;
+      if ((scSnap && scSnap.summary) || String(card.chainState || '') !== 'selfcheck') selfcheckRunning = false;
+    }
     if (!initCardEl) return;
     const cs = String(card.chainState || '');
     if (!INIT_PHASE_STATES.includes(cs)) {
@@ -2704,7 +2711,8 @@
           : sc.summary === 'degraded' ? '<span class="initCheckDegraded">degraded</span>' : '<span class="initCheckOk">pass</span>';
         blocks.push('<div class="initCheck">summary：' + summaryMark + '</div>');
       }
-      blocks.push('<div class="initCardActions"><button id="initCardRunSelfcheck">' + (sorted && sorted.length ? '重新自检' : '发起自检') + '</button></div>');
+      const runLabel = selfcheckRunning ? '自检中…（约 1-2 分钟）' : (sorted && sorted.length ? '重新自检' : '发起自检');
+      blocks.push('<div class="initCardActions"><button id="initCardRunSelfcheck"' + (selfcheckRunning ? ' disabled' : '') + '>' + runLabel + '</button></div>');
     }
 
     // ── 公司开张选择面（ONBOARDING 或 SELFCHECK 已完结）──
@@ -2914,6 +2922,7 @@
     if (runBtn) runBtn.addEventListener('click', () => {
       runBtn.disabled = true;
       runBtn.textContent = '自检中…（约 1-2 分钟）';
+      selfcheckRunning = true; // 重拉渲染保持 loading 态（2026-08-15）
       uiAction('initSelfcheckRun');
     });
     const syncBtn = document.getElementById('initCardRunSync');
