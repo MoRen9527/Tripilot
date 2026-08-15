@@ -2721,7 +2721,7 @@
           '<div class="initField"><label>CEO 名字</label>' +
           '<input id="initCeoName" value="' + escapeHtml(onboarding && onboarding.ceoName ? onboarding.ceoName : '') + '" placeholder="您的名字（公司 CEO）" /></div>'
         );
-        blocks.push('<div class="initCheck">选择启用岗位（推荐至少 5 岗，含治理角色；≥1 岗可开张）：</div>');
+        blocks.push('<div class="initCheck">选择启用岗位（推荐至少 7 岗，含治理角色；≥1 岗可开张）：</div>');
         for (const r of roles) {
           const checked = savedSel ? savedSel.includes(r.roleId) : !!r.defaultSelected;
           blocks.push(

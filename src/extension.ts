@@ -3152,6 +3152,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		if (
 			eventType === 'init:chain-changed'
 			|| eventType === 'init:selfcheck-finished'
+			|| eventType === 'init:selfcheck-progress'
 			|| (eventType === 'init:step-event' && (data as any)?.step === 'assembled')
 			|| (eventType === 'init:step-event' && (data as any)?.step === 'assemble-failed')
 			|| eventType === 'init:sync-finished'
