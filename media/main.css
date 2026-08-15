@@ -1752,3 +1752,5 @@ button.ghost {
 .initCardActions button { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 2px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
 .initCardActions button:hover { background: var(--vscode-button-hoverBackground); }
 .initCardActions button.ghost { background: transparent; color: var(--vscode-foreground); border: 1px solid var(--vscode-input-border, transparent); }
+.initCardActions button.ghost.warn { color: var(--vscode-errorForeground, #f48771); border-color: var(--vscode-errorBorder, #f48771); }
+.initCardActions button.ghost.warn:hover { background: var(--vscode-errorBackground, rgba(244,135,113,0.1)); }

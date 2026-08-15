@@ -2898,6 +2898,14 @@
       }
     }
 
+    // ── Debug 重新初始化按钮（TRILC_DEBUG=1 时显示）──
+    if (card.canReset) {
+      blocks.push(
+        '<div class="initCardActions"><button id="initCardReset" class="ghost warn">' +
+        '重新初始化（Debug）</button></div>'
+      );
+    }
+
     initCardEl.innerHTML = blocks.join('');
 
     const refreshBtn = document.getElementById('initCardRefresh');
@@ -2912,6 +2920,15 @@
     if (syncBtn) syncBtn.addEventListener('click', () => uiAction('initSyncRun'));
     const confirmBtn = document.getElementById('initCardConfirm');
     if (confirmBtn) confirmBtn.addEventListener('click', () => uiAction('initConfirm'));
+    const resetBtn = document.getElementById('initCardReset');
+    if (resetBtn) {
+      resetBtn.addEventListener('click', () => {
+        const includeProject = confirm('同时清除项目关联（project-registry）？\n\n取消 = 仅重置公司状态\n确定 = 同时重置公司 + 项目关联');
+        if (includeProject !== null) {
+          uiAction('initReset', { includeProject });
+        }
+      });
+    }
     const assembleBtn = document.getElementById('initCardAssemble');
     if (assembleBtn) {
       assembleBtn.addEventListener('click', () => {

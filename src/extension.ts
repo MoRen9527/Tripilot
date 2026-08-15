@@ -137,6 +137,10 @@ type InitPhaseCardPayload = {
 		remote: 'ok' | null;
 		degraded: boolean;
 	} | null;
+	/** Debug mode flag（TRILC_DEBUG=1），解锁 reset 端点 + UI 控制。 */
+	debugMode?: boolean;
+	/** 是否可 reset（= debugMode）。 */
+	canReset?: boolean;
 };
 
 function countLinesForDiffStat(value: string): number {
@@ -3082,12 +3086,15 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		try {
 			const res = await fetch(`${baseUrl}/internal/v1/init/chain/status`);
 			if (res.ok) {
-				const json = await res.json() as { chainState?: string; phaseDetail?: InitPhaseCardPayload['selfcheck'] & { selfcheck?: InitPhaseCardPayload['selfcheck'] } };
+				const json = await res.json() as { chainState?: string; phaseDetail?: InitPhaseCardPayload['selfcheck'] & { selfcheck?: InitPhaseCardPayload['selfcheck'] }; debugMode?: boolean; canReset?: boolean };
 				card.chainState = String(json?.chainState ?? 'uninitialized');
 				const detail = (json as any)?.phaseDetail;
 				if (detail && typeof detail === 'object' && detail.selfcheck) {
 					card.selfcheck = detail.selfcheck;
 				}
+				// Debug mode: 从 TriLC 读取并传递给 UI
+				card.debugMode = Boolean(json?.debugMode ?? false);
+				card.canReset = Boolean(json?.canReset ?? false);
 			}
 		} catch {
 			// daemon 不可达：卡片保留默认帧（chainState uninitialized → 呈现层隐藏/离线提示）
@@ -3304,6 +3311,33 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			});
 		} catch {
 			// 触发失败：刷新卡片呈现现状（含 409 附 check 的最新结果）
+		}
+		await this.syncInitPhaseCard();
+	}
+
+	/** Debug reset: POST /internal/v1/init/reset（零本地执行——daemon 服务端执行）。
+	 * 仅在 debug mode 下可用（TRILC_DEBUG=1）。可选清理项目关联（includeProject）。 */
+	private async triggerInitReset(includeProject: boolean): Promise<void> {
+		const baseUrl = this.getTrilcBaseUrl();
+		try {
+			const res = await fetch(`${baseUrl}/internal/v1/init/reset`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ includeProject }),
+			});
+			if (!res.ok) {
+				const error = await res.json().catch(() => ({ error: 'request_failed' }));
+				if (res.status === 403) {
+					console.warn('[TriPilot:init] reset: debug mode not enabled:', error);
+				} else {
+					console.error('[TriPilot:init] reset failed:', error);
+				}
+				return;
+			}
+			const result = await res.json() as { ok: boolean; chainState: string; cleared: string[] };
+			console.log('[TriPilot:init] reset successful:', result.chainState, 'cleared:', result.cleared.length);
+		} catch {
+			// 触发失败：刷新卡片呈现现状
 		}
 		await this.syncInitPhaseCard();
 	}
@@ -5801,6 +5835,10 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			}
 			case 'initConfirm': {
 				await this.triggerInitConfirm();
+				return;
+			}
+			case 'initReset': {
+				await this.triggerInitReset(Boolean(payload?.includeProject ?? false));
 				return;
 			}
 			case 'addContext': {
