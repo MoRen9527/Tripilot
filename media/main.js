@@ -2903,7 +2903,11 @@
     const refreshBtn = document.getElementById('initCardRefresh');
     if (refreshBtn) refreshBtn.addEventListener('click', () => uiAction('initRefresh'));
     const runBtn = document.getElementById('initCardRunSelfcheck');
-    if (runBtn) runBtn.addEventListener('click', () => uiAction('initSelfcheckRun'));
+    if (runBtn) runBtn.addEventListener('click', () => {
+      runBtn.disabled = true;
+      runBtn.textContent = '自检中…（约 1-2 分钟）';
+      uiAction('initSelfcheckRun');
+    });
     const syncBtn = document.getElementById('initCardRunSync');
     if (syncBtn) syncBtn.addEventListener('click', () => uiAction('initSyncRun'));
     const confirmBtn = document.getElementById('initCardConfirm');
