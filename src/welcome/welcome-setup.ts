@@ -14,11 +14,6 @@ import * as https from 'node:https';
 // -- Types --
 
 interface WelcomeSetupResult {
-  language: 'zh' | 'en';
-  apiKey: string;
-  modelId: string;
-  apiEndpoint: string;
-  trimcUrl: string;
   tricompanyEnabled: boolean;
 }
 
@@ -202,10 +197,7 @@ body {
 <div class="subtitle">${_('subtitle')}</div>
 
 <div class="steps">
-  <div class="step-dot" id="dot0"></div>
-  <div class="step-dot" id="dot1"></div>
-  <div class="step-dot" id="dot2"></div>
-  <div class="step-dot" id="dot3"></div>
+  <div class="step-dot active" id="dot0"></div>
 </div>
 
 <div class="step-content" id="stepContent"></div>
@@ -215,16 +207,10 @@ body {
 <script>
 const vscode = acquireVsCodeApi();
 let currentStep = 0;
-const maxStep = 3;
-let testing = false;
+const maxStep = 0;
 
 let wizardData = {
-  language: 'zh',
-  apiKey: '',
-  modelId: 'tmv-deepseek-v4-pro',
-  apiEndpoint: 'https://api.deepseek.com',
-  trimcUrl: '',
-  tricompanyEnabled: false,
+  tricompanyEnabled: true,
 };
 
 // Inline i18n from server
@@ -253,58 +239,8 @@ function updateDots() {
 
 function renderStep() {
   var el = document.getElementById('stepContent');
-  if (currentStep === 0) el.innerHTML = step1Html();
-  else if (currentStep === 1) el.innerHTML = step2Html();
-  else if (currentStep === 2) el.innerHTML = step3Html();
-  else el.innerHTML = step4Html();
+  el.innerHTML = step4Html();
   bindStepEvents();
-}
-
-function step1Html() {
-  var sel = wizardData.language === 'en' ? 'en' : 'zh';
-  return '<h2>'+_('step1Title')+'</h2>' +
-    '<div class="desc-block">'+_('step1Desc')+'</div>' +
-    '<div class="form-group">' +
-      '<label for="langSelect">'+_('step1LangLabel')+'</label>' +
-      '<select id="langSelect">' +
-        '<option value="zh"'+(sel==='zh'?' selected':'')+'>中文</option>' +
-        '<option value="en"'+(sel==='en'?' selected':'')+'>English</option>' +
-      '</select>' +
-    '</div>';
-}
-
-function step2Html() {
-  return '<h2>'+_('step2Title')+'</h2>' +
-    '<div class="form-group">' +
-      '<label for="apiKeyInput">'+_('step2ApiKeyLabel')+'</label>' +
-      '<input id="apiKeyInput" type="password" placeholder="'+_('step2ApiKeyPlaceholder')+'" value="'+esc(wizardData.apiKey)+'" />' +
-      '<p class="note">'+_('step2Note')+'</p>' +
-    '</div>' +
-    '<div class="form-group">' +
-      '<label for="modelIdInput">'+_('step2ModelIdLabel')+'</label>' +
-      '<input id="modelIdInput" type="text" value="'+esc(wizardData.modelId)+'" />' +
-    '</div>' +
-    '<div class="form-group">' +
-      '<label for="endpointInput">'+_('step2EndpointLabel')+'</label>' +
-      '<input id="endpointInput" type="text" value="'+esc(wizardData.apiEndpoint)+'" />' +
-    '</div>' +
-    '<div class="flex-row">' +
-      '<button class="btn btn-secondary" id="testConnBtn">'+_('testConnection')+'</button>' +
-      '<span class="status-msg" id="testStatus"></span>' +
-    '</div>';
-}
-
-function step3Html() {
-  return '<h2>'+_('step3Title2')+'</h2>' +
-    '<div class="desc-block">'+_('step3Desc')+'</div>' +
-    '<div class="form-group">' +
-      '<label for="trimcUrlInput">'+_('step3UrlLabel')+'</label>' +
-      '<input id="trimcUrlInput" type="text" placeholder="'+_('step3UrlPlaceholder')+'" value="'+esc(wizardData.trimcUrl)+'" />' +
-    '</div>' +
-    '<div class="checkbox-row">' +
-      '<input type="checkbox" id="trimcLaterCb" checked />' +
-      '<label for="trimcLaterCb">'+_('step3LaterLabel')+'</label>' +
-    '</div>';
 }
 
 function step4Html() {
@@ -352,51 +288,8 @@ function bindButtonEvents() {
 }
 
 function bindStepEvents() {
-  var s = document.getElementById('langSelect');
-  if (s) s.onchange = function(){ wizardData.language = s.value; };
-  s = document.getElementById('apiKeyInput');
-  if (s) s.oninput = function(){ wizardData.apiKey = s.value; };
-  s = document.getElementById('modelIdInput');
-  if (s) s.oninput = function(){ wizardData.modelId = s.value; };
-  s = document.getElementById('endpointInput');
-  if (s) s.oninput = function(){ wizardData.apiEndpoint = s.value; };
-  var btn = document.getElementById('testConnBtn');
-  if (btn) btn.onclick = function(){ doTestConnection(); };
-  s = document.getElementById('trimcUrlInput');
-  if (s) s.oninput = function(){ wizardData.trimcUrl = s.value; };
-  s = document.getElementById('tricompanyCb');
+  var s = document.getElementById('tricompanyCb');
   if (s) s.onchange = function(){ wizardData.tricompanyEnabled = s.checked; };
-}
-
-function collectFields() {
-  var el = document.getElementById('apiKeyInput');
-  if (el) wizardData.apiKey = el.value;
-  el = document.getElementById('modelIdInput');
-  if (el) wizardData.modelId = el.value || 'tmv-deepseek-v4-pro';
-  el = document.getElementById('endpointInput');
-  if (el) wizardData.apiEndpoint = el.value || 'https://api.deepseek.com';
-  el = document.getElementById('trimcUrlInput');
-  if (el) wizardData.trimcUrl = el.value;
-}
-
-function collectAndNext() {
-  collectFields();
-  setStep(currentStep + 1);
-}
-
-function doTestConnection() {
-  collectFields();
-  testing = true;
-  var btn = document.getElementById('testConnBtn');
-  if (btn) { btn.textContent = _('testing'); btn.disabled = true; }
-  var st = document.getElementById('testStatus');
-  if (st) { st.className = 'status-msg show loading'; st.textContent = _('testing'); }
-  vscode.postMessage({
-    type: 'testConnection',
-    apiKey: wizardData.apiKey,
-    modelId: wizardData.modelId,
-    apiEndpoint: wizardData.apiEndpoint,
-  });
 }
 
 function complete() {
@@ -407,21 +300,6 @@ function complete() {
 
 window.addEventListener('message', function(e) {
   var msg = e.data;
-  if (msg.type === 'testConnectionResult') {
-    testing = false;
-    var btn = document.getElementById('testConnBtn');
-    if (btn) { btn.textContent = _('testConnection'); btn.disabled = false; }
-    var st = document.getElementById('testStatus');
-    if (st) {
-      if (msg.ok) {
-        st.className = 'status-msg show success';
-        st.textContent = _('testSuccess');
-      } else {
-        st.className = 'status-msg show error';
-        st.textContent = _('testFailed') + (msg.error ? ': ' + msg.error : '');
-      }
-    }
-  }
   if (msg.type === 'wizardComplete') {
     if (msg.ok) {
       var btn = document.getElementById('finishBtn');
@@ -444,124 +322,15 @@ setStep(0);
 </html>`;
 }
 
-// -- TriLC /v1/models test helper --
-
-function testTriLCConnection(
-  apiKey: string,
-  _modelId: string,
-  apiEndpoint: string,
-): Promise<{ ok: boolean; error?: string }> {
-  const url = `${apiEndpoint}/v1/models`;
-  const timeoutMs = 10_000;
-
-  return new Promise((resolve) => {
-    let parsedUrl: URL;
-    try {
-      parsedUrl = new URL(url);
-    } catch (e) {
-      resolve({ ok: false, error: `Invalid URL: ${apiEndpoint}` });
-      return;
-    }
-
-    const isHttps = parsedUrl.protocol === 'https:';
-    const transport = isHttps ? https : http;
-
-    const headers: Record<string, string> = { Accept: 'application/json' };
-    if (apiKey) {
-      headers['Authorization'] = `Bearer ${apiKey}`;
-    }
-
-    const req = transport.request(
-      {
-        hostname: parsedUrl.hostname,
-        port: parsedUrl.port || (isHttps ? 443 : 80),
-        path: parsedUrl.pathname + parsedUrl.search,
-        method: 'GET',
-        headers,
-        timeout: timeoutMs,
-      },
-      (res) => {
-        let body = '';
-        res.on('data', (chunk: Buffer) => {
-          body += chunk.toString();
-        });
-        res.on('end', () => {
-          try {
-            if (res.statusCode === 200) {
-              const parsed = JSON.parse(body);
-              const hasModels =
-                (parsed?.data && Array.isArray(parsed.data)) ||
-                (parsed?.models && Array.isArray(parsed.models));
-              if (hasModels) {
-                resolve({ ok: true });
-              } else {
-                resolve({
-                  ok: false,
-                  error: 'Unexpected response format from API',
-                });
-              }
-            } else if (res.statusCode === 401 || res.statusCode === 403) {
-              resolve({
-                ok: false,
-                error: `Authentication failed (HTTP ${res.statusCode}). Check your API key.`,
-              });
-            } else {
-              resolve({
-                ok: false,
-                error: `HTTP ${res.statusCode}: ${body.slice(0, 200)}`,
-              });
-            }
-          } catch (e) {
-            resolve({
-              ok: false,
-              error: `Failed to parse response: ${e instanceof Error ? e.message : String(e)}`,
-            });
-          }
-        });
-      },
-    );
-
-    req.on('error', (err: NodeJS.ErrnoException) => {
-      if (err.code === 'ECONNREFUSED') {
-        resolve({ ok: false, error: 'Connection refused. Check the API endpoint URL.' });
-      } else if (err.code === 'ENOTFOUND') {
-        resolve({ ok: false, error: 'Host not found. Check the API endpoint URL.' });
-      } else {
-        resolve({ ok: false, error: err.message });
-      }
-    });
-
-    req.on('timeout', () => {
-      req.destroy();
-      resolve({ ok: false, error: 'Connection timed out. Check the API endpoint URL.' });
-    });
-
-    req.end();
-  });
-}
-
 // -- Settings persistence --
 
 async function persistWelcomeSettings(result: WelcomeSetupResult): Promise<void> {
   const tripilot = vscode.workspace.getConfiguration('tripilot');
 
-  // Core chat provider config
-  await tripilot.update('chatProvider', 'models-direct', vscode.ConfigurationTarget.Global);
-  await tripilot.update('modelsDirect.baseUrl', 'http://127.0.0.1:8711', vscode.ConfigurationTarget.Global);
-  await tripilot.update('modelsDirect.defaultModel', result.modelId, vscode.ConfigurationTarget.Global);
-  await tripilot.update('triLC.autoStart', true, vscode.ConfigurationTarget.Global);
-
-  // TriMC URL
-  const trimcUrl = (result.trimcUrl ?? '').trim();
-  await tripilot.update('trimc.url', trimcUrl, vscode.ConfigurationTarget.Global);
-
-  // TriCompany
+  // TriCompany 开关（package.json 已注册）
   await tripilot.update('tricompany.enabled', result.tricompanyEnabled, vscode.ConfigurationTarget.Global);
 
-  // Language
-  await tripilot.update('language', result.language, vscode.ConfigurationTarget.Global);
-
-  // Mark setup completed
+  // Mark setup completed（package.json 已注册）
   await tripilot.update('setupCompleted', true, vscode.ConfigurationTarget.Global);
 
   // Persist to %APPDATA%/TriCade/trilc-config.json (human-readable reference config)
@@ -569,53 +338,15 @@ async function persistWelcomeSettings(result: WelcomeSetupResult): Promise<void>
     const appData = process.env.APPDATA || process.env.HOME || '';
     if (appData) {
       const triCadeDir = path.join(appData, 'TriCade');
-      if (!fs.existsSync(triCadeDir)) {
-        fs.mkdirSync(triCadeDir, { recursive: true });
-      }
-      const configPath = path.join(triCadeDir, 'trilc-config.json');
+      if (!fs.existsSync(triCadeDir)) fs.mkdirSync(triCadeDir, { recursive: true });
       const config = {
-        apiKey: result.apiKey,
-        defaultModel: result.modelId,
-        apiEndpoint: result.apiEndpoint,
-        trimcUrl: trimcUrl || undefined,
         tricompanyEnabled: result.tricompanyEnabled,
-        language: result.language,
         configuredAt: new Date().toISOString(),
       };
-      fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+      fs.writeFileSync(path.join(triCadeDir, 'trilc-config.json'), JSON.stringify(config, null, 2), 'utf-8');
     }
   } catch (e) {
-    // Non-critical: do not block setup on config file write failure
     console.error('[WelcomeSetup] Failed to write trilc-config.json:', e);
-  }
-
-  // w32-2 fix: Bridge wizard API config to TriLC's key-cache.
-  // TriLC reads keys from %LOCALAPPDATA%/trilc/keys.json; without this,
-  // the user-entered API key from the wizard never reaches TriLC.
-  try {
-    const localAppData = process.env.LOCALAPPDATA || process.env.HOME || '';
-    if (localAppData) {
-      const trilcDir = path.join(localAppData, 'trilc');
-      if (!fs.existsSync(trilcDir)) {
-        fs.mkdirSync(trilcDir, { recursive: true });
-      }
-      const keyCachePath = path.join(trilcDir, 'keys.json');
-      const keyCache = {
-        keys: {
-          deepseek: {
-            api_key: result.apiKey,
-            base_url: result.apiEndpoint || 'https://api.deepseek.com',
-          },
-        },
-        defaultModel: result.modelId,
-        refreshIntervalS: 900,
-        fetchedAt: Date.now(),
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-      };
-      fs.writeFileSync(keyCachePath, JSON.stringify(keyCache, null, 2), 'utf-8');
-    }
-  } catch (e) {
-    console.error('[WelcomeSetup] Failed to write TriLC key-cache:', e);
   }
 }
 
@@ -652,12 +383,6 @@ export async function showWelcomeSetupWizard(context: vscode.ExtensionContext): 
     switch (msg.type) {
       case 'webviewReady':
         break;
-
-      case 'testConnection': {
-        const result = await testTriLCConnection(msg.apiKey, msg.modelId, msg.apiEndpoint);
-        panel.webview.postMessage({ type: 'testConnectionResult', ok: result.ok, error: result.error });
-        break;
-      }
 
       case 'complete': {
         if (committed) return;

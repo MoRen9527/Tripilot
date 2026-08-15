@@ -210,7 +210,10 @@
         },
         "tripilot.trilcDirect.authMode": {
           "type": "string",
-          "enum": ["minimal", "permissive"],
+          "enum": [
+            "minimal",
+            "permissive"
+          ],
           "default": "minimal",
           "description": "Auth mode: minimal = local-only, permissive = accepts external API keys."
         },
@@ -460,6 +463,16 @@
               }
             }
           }
+        },
+        "tripilot.setupCompleted": {
+          "type": "boolean",
+          "default": false,
+          "description": "TriCade 首次启动向导已完成（完成后不再弹出）"
+        },
+        "tripilot.tricompany.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "启用赛博公司模式（加载 13 个 AI 员工角色）"
         }
       }
     }
