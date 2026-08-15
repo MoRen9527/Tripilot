@@ -10,7 +10,6 @@ import { JsonlChatHistoryStore, type ChatHistoryEvent } from './chatHistory';
 import { TrilcDirectClient, type TrilcClientConfig, type TrilcModelInfo, type TrilcMessage, type TrilcTool, type TrilcContentBlock, type OpenAIChatMessage, type TrilcAutoModelsSession } from './trilcDirect/trilcClient';
 import { TriLCClient, type StreamCallbacks, type SubmitTaskRequest, type TriLCAgent } from './TriLCClient';
 import { applyPatch as applyUnifiedPatch, diffLines, parsePatch } from 'diff';
-import { showWelcomeSetupWizard } from './welcome/welcome-setup';
 
 type WebviewInboundMessage =
 	| { type: 'webviewReady' }
@@ -743,9 +742,6 @@ export function activate(context: vscode.ExtensionContext) {
 			webviewOptions: { retainContextWhenHidden: true }
 		})
 	);
-
-		//── Welcome / setup wizard (fire-and-forget, does not block TriLC startup) ──
-		void showWelcomeSetupWizard(context);
 
 	// ── Status bar: TriLC + TriModel health ──
 	const trilcStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
