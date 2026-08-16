@@ -799,6 +799,13 @@ export function activate(context: vscode.ExtensionContext) {
 	const statusInterval = setInterval(() => void updateServiceStatus(), 30_000);
 	context.subscriptions.push({ dispose: () => clearInterval(statusInterval) });
 
+	// 2026-08-16：初始化阶段卡兜底轮询（30s）——SSE 断连/daemon 阻塞窗口后事件不可靠，
+	// 定期快照拉取保证卡片最终一致（CEO 手测：恢复变绿后不自动弹新阶段卡）
+	const initCardInterval = setInterval(() => {
+		try { void provider.syncInitPhaseCard(); } catch { /* provider 未就绪忽略 */ }
+	}, 30_000);
+	context.subscriptions.push({ dispose: () => clearInterval(initCardInterval) });
+
 	// Background prefetch: try to warm TriLC model list to speed first Settings open.
 	void (async () => {
 		try {
@@ -3139,7 +3146,8 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
 
-	private async syncInitPhaseCard(): Promise<void> {
+	/** 2026-08-16: public——activate 兜底轮询调用 */
+	async syncInitPhaseCard(): Promise<void> {
 		const card = await this.fetchInitPhaseCard();
 		this.postInitPhaseCard(card);
 	}
@@ -3198,6 +3206,9 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			}, (res) => {
 				res.setEncoding('utf-8');
 				resetWatchdog();
+				// 2026-08-16：重连对齐——SSE 无重放缓冲，断连窗口（daemon 阻塞/网络）丢的事件
+				// 在重连成功时以一次快照拉取代偿（CEO 手测：chat 侧完成项目初始化面板不刷新）
+				try { void this.syncInitPhaseCard(); } catch { /* provider 未就绪忽略 */ }
 				res.on('data', (chunk: string) => {
 					resetWatchdog();
 					buffer += chunk;
