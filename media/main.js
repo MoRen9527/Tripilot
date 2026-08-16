@@ -2658,6 +2658,12 @@
   }
 
   function renderInitCard(card) {
+    // 2026-08-16 热修：用户正在卡内输入时跳过重渲染（30s 轮询/SSE 刷新不打扰输入）
+    const active = document.activeElement;
+    if (active && initCardEl && initCardEl.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+      initCardPayload = card; // 数据仍更新（状态同步），DOM 保留用户输入
+      return;
+    }
     initCardPayload = card;
     // 2026-08-15：探测已完结（有 summary）或链态已离开 selfcheck → 清运行态
     if (selfcheckRunning) {
