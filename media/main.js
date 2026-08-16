@@ -2662,7 +2662,10 @@
     // 2026-08-15：探测已完结（有 summary）或链态已离开 selfcheck → 清运行态
     if (selfcheckRunning) {
       const scSnap = card && card.selfcheck;
-      if ((scSnap && scSnap.summary) || String(card.chainState || '') !== 'selfcheck') selfcheckRunning = false;
+      if ((scSnap && scSnap.summary) || String(card.chainState || '') !== 'selfcheck') {
+        selfcheckRunning = false;
+        if (window.__scPoll) { clearInterval(window.__scPoll); window.__scPoll = null; }
+      }
     }
     if (!initCardEl) return;
     const cs = String(card.chainState || '');
@@ -2924,6 +2927,12 @@
       runBtn.textContent = '自检中…（约 1-2 分钟）';
       selfcheckRunning = true; // 重拉渲染保持 loading 态（2026-08-15）
       uiAction('initSelfcheckRun');
+      // 2026-08-16 兜底：事件断连/daemon 阻塞窗口时 SSE 不可靠——运行期每 10s 主动刷新
+      if (window.__scPoll) clearInterval(window.__scPoll);
+      window.__scPoll = setInterval(() => {
+        if (!selfcheckRunning) { clearInterval(window.__scPoll); window.__scPoll = null; return; }
+        uiAction('initRefresh');
+      }, 10000);
     });
     const syncBtn = document.getElementById('initCardRunSync');
     if (syncBtn) syncBtn.addEventListener('click', () => uiAction('initSyncRun'));
