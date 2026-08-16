@@ -84,6 +84,7 @@ type WebviewOutboundMessage =
  * 且 plane-hint ok 注记「问周面冒烟绿 ≠ 模型链可用」由 webview 呈现层执行）。 */
 type InitPhaseCardPayload = {
 	chainState: string;
+	projectLink?: { status: string; source: string | null; projectKey: string | null; worktreePath: string | null };
 	selfcheck?: {
 		runId: string | null;
 		summary: 'pass' | 'degraded' | 'blocked' | null;
@@ -3095,6 +3096,9 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 				if (detail && typeof detail === 'object' && detail.selfcheck) {
 					card.selfcheck = detail.selfcheck;
 				}
+				// 2026-08-16：project-link 快照（linked 状态 + worktree 呈现 + 同步引导依据）
+				const pl = (detail as Record<string, unknown>)['project-link'] as InitPhaseCardPayload['projectLink'];
+				if (pl) card.projectLink = pl;
 				// Debug mode: 从 TriLC 读取并传递给 UI
 				card.debugMode = Boolean(json?.debugMode ?? false);
 				card.canReset = Boolean(json?.canReset ?? false);

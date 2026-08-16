@@ -2751,6 +2751,14 @@
 
     // ── 开张卡（A2 完成判据 = CEO 名 + 员工名单可回看）：project-link 起常驻 ──
     if (cs === 'project-link' || cs === 'sync' || cs === 'confirm') {
+      // 2026-08-16：项目关联状态呈现 + 同步引导（linked 后提供「开始五维同步」入口）
+      const pl = card.projectLink || null;
+      if (cs === 'project-link' && pl && pl.status === 'linked') {
+        blocks.push('<div class="initCheck initCheckOk">项目已关联 ✓ — ' + escapeHtml(String(pl.projectKey || '?')) + ' · worktree：' + escapeHtml(String(pl.worktreePath || '?')) + '</div>');
+        blocks.push('<div class="initCardActions"><button id="initCardRunSync">开始五维同步 →</button></div>');
+      } else if (cs === 'project-link') {
+        blocks.push('<div class="initCheck">项目关联：待进行（trilc chat 在项目目录运行可认领/建立）</div>');
+      }
       if (onboarding && onboarding.ceoName && Array.isArray(onboarding.employees) && onboarding.employees.length) {
         blocks.push('<div class="initCheck initCheckOk">公司已开张 ✓</div>');
         blocks.push('<div class="initCheck"><b>CEO</b>：' + escapeHtml(onboarding.ceoName) + '</div>');
