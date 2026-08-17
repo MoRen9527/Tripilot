@@ -1425,7 +1425,6 @@
   }
 
   // --- Structured response parts (Copilot-like) ---
-  let currentToolGroup = null; // { item, summaryEl, listEl, count, runningCount }
   const toolInvocations = new Map(); // invocationId -> { statusEl, outputEl, rootEl }
   const sceneToolInvocations = new Map(); // invocationId -> { toolName, status, atMs }
   let sceneFocus = { kind: '', id: '' };
@@ -1574,45 +1573,21 @@
     return { item, body };
   }
 
-  function ensureToolGroup() {
-    if (currentToolGroup && currentToolGroup.item && messagesEl.contains(currentToolGroup.item)) {
-      return currentToolGroup;
-    }
-
-    const { item, body } = appendPartContainer({ kind: 'tools', title: null });
-    const details = document.createElement('details');
-    details.className = 'toolGroup';
-    details.open = false; // Copilot-like: collapsed by default
-
-    const summary = document.createElement('summary');
-    summary.className = 'toolGroupSummary';
-    summary.textContent = '工具调用';
-    details.appendChild(summary);
-
-    const list = document.createElement('div');
-    list.className = 'toolGroupList';
-    details.appendChild(list);
-
-    body.appendChild(details);
-
-    currentToolGroup = { item, detailsEl: details, summaryEl: summary, listEl: list, count: 0, runningCount: 0 };
-    return currentToolGroup;
-  }
-
-  function updateToolGroupSummary() {
-    if (!currentToolGroup) return;
-    const { count, runningCount } = currentToolGroup;
-    const running = runningCount > 0;
-    currentToolGroup.summaryEl.textContent = running
-      ? `正在调用工具（${count}）`
-      : `已调用工具（${count}）`;
-  }
+  // ensureToolGroup/updateToolGroupSummary removed — DEFECT-CARD-PER-STEP (CEO
+  // 2026-08-18): tools render as one card each in time order (trilc chat style),
+  // no shared group container.
 
   function onToolInvocationBegin(msg) {
-    const g = ensureToolGroup();
-    g.count++;
-    g.runningCount++;
-    updateToolGroupSummary();
+    // DEFECT-CARD-PER-STEP (CEO 2026-08-18): 每个工具 = 时序里独立一张卡（trilc chat
+    // 卡片式），不再聚进一个「工具调用」组卡。先把手头流式叙述文本定稿成独立文本卡，
+    // 让「叙述卡 → 工具卡 → … → 结论卡」按时序排布。
+    if (streamingAssistantBodyEl && (streamingAssistantMarkdown || '').trim()) {
+      renderMarkdownInto(streamingAssistantBodyEl, streamingAssistantMarkdown);
+    }
+    streamingAssistantBodyEl = null;
+    streamingAssistantMarkdown = '';
+
+    const { item: _card, body: cardBody } = appendPartContainer({ kind: 'tools', title: null });
 
     const id = String(msg.invocationId || '');
 
@@ -1652,7 +1627,7 @@
     out.textContent = '';
     root.appendChild(out);
 
-    g.listEl.appendChild(root);
+    cardBody.appendChild(root);
     messagesEl.scrollTop = messagesEl.scrollHeight;
 
     if (id) toolInvocations.set(id, { statusEl, outputEl: out, rootEl: root });
@@ -1683,11 +1658,6 @@
       if (msg.outputFull || msg.outputPreview) {
         record.outputEl.textContent = String(msg.outputFull || msg.outputPreview || '');
       }
-    }
-
-    if (currentToolGroup) {
-      currentToolGroup.runningCount = Math.max(0, (currentToolGroup.runningCount || 0) - 1);
-      updateToolGroupSummary();
     }
 
     if (id) {
@@ -3075,7 +3045,6 @@
         if (messagesEl) messagesEl.innerHTML = '';
 		streamingAssistantBodyEl = null;
     streamingAssistantMarkdown = '';
-		currentToolGroup = null;
 		toolInvocations.clear();
 		lastTodoCardEl = null;
 		pendingEditsCardByRequestId = new Map();
