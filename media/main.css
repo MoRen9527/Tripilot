@@ -1014,6 +1014,31 @@ body {
   padding: 0;
 }
 
+/* GFM tables (DEFECT-MD-TABLE: raw-pipe rendering fix) */
+.md table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  max-width: 100%;
+  display: block;
+  overflow-x: auto;
+  font-size: 12px;
+}
+.md th,
+.md td {
+  border: 1px solid var(--vscode-panel-border);
+  padding: 4px 10px;
+  text-align: left;
+  vertical-align: top;
+  word-break: break-word;
+}
+.md th {
+  background: var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.15));
+  font-weight: 600;
+}
+.md tbody tr:nth-child(even) {
+  background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.06));
+}
+
 .msg-tool .badge {
   display: none;
 }

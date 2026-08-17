@@ -1225,6 +1225,19 @@
     return s;
   }
 
+  // ── GFM table helpers (DEFECT-MD-TABLE: LS/model tables rendered as raw pipes) ──
+  function splitTableRow(line) {
+    let s = line.trim();
+    if (s.startsWith('|')) s = s.slice(1);
+    if (s.endsWith('|')) s = s.slice(0, -1);
+    return s.split('|').map((c) => c.trim());
+  }
+  function isTableDelimiter(line) {
+    if (!line.includes('|') || !line.includes('-')) return false;
+    const cells = splitTableRow(line);
+    return cells.length > 0 && cells.every((c) => /^:?-+:?$/.test(c));
+  }
+
   function renderMarkdown(markdown) {
     const src = String(markdown ?? '').replace(/\r\n?/g, '\n');
     const lines = src.split('\n');
@@ -1295,6 +1308,28 @@
           i++;
         }
         html += '</ol>';
+        continue;
+      }
+
+      // GFM table: header row + delimiter row (| --- | --- |), then body rows
+      if (lines[i].includes('|') && i + 1 < lines.length && isTableDelimiter(lines[i + 1])) {
+        const headerCells = splitTableRow(lines[i]);
+        const aligns = splitTableRow(lines[i + 1]).map((c) => {
+          const l = c.startsWith(':'), r = c.endsWith(':');
+          return l && r ? 'center' : r ? 'right' : l ? 'left' : '';
+        });
+        const alignAttr = (ci) => (aligns[ci] ? ` style="text-align:${aligns[ci]}"` : '');
+        i += 2;
+        let body = '';
+        while (i < lines.length && lines[i].trim() && lines[i].includes('|')) {
+          const cells = splitTableRow(lines[i]);
+          body += '<tr>' + headerCells.map((_, ci) =>
+            `<td${alignAttr(ci)}>${inlineMd(cells[ci] ?? '')}</td>`).join('') + '</tr>';
+          i++;
+        }
+        const head = '<tr>' + headerCells.map((c, ci) =>
+          `<th${alignAttr(ci)}>${inlineMd(c)}</th>`).join('') + '</tr>';
+        html += `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
         continue;
       }
 
