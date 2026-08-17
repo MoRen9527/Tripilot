@@ -1577,6 +1577,33 @@
   // 2026-08-18): tools render as one card each in time order (trilc chat style),
   // no shared group container.
 
+  // DEFECT-TOOL-BRIEF (CEO 2026-08-18): 卡片摘要行给调用简介（同 trilc TUI
+  // ToolCallLine 风格），不只显示 "Read 运行中"。
+  function toolCallBrief(toolName, inputPreviewJson) {
+    const name = String(toolName || 'tool');
+    const trunc = (s, n) => (String(s).length > n ? String(s).slice(0, n) + '…' : String(s));
+    let arg = '';
+    try {
+      const obj = JSON.parse(String(inputPreviewJson || '{}'));
+      const p = obj.file_path || obj.path || obj.filePath || obj.absolute_path;
+      if (p) arg = trunc(p, 70);
+      else if (obj.command || obj.cmd) arg = trunc(obj.command || obj.cmd, 60);
+      else if (obj.pattern) arg = trunc(obj.pattern, 50);
+      else if (obj.prompt) arg = trunc(obj.prompt, 60);
+      else {
+        arg = Object.entries(obj).slice(0, 2)
+          .map(([k, v]) => `${k}: ${trunc(v, 30)}`).join(', ');
+      }
+    } catch { /* unparseable preview — fall back to name only */ }
+    const actions = {
+      Read: '读取文件', Write: '写入文件', Edit: '编辑文件', Bash: '执行命令',
+      shell_exec: '执行命令', Grep: '搜索内容', Glob: '查找文件', LS: '列目录',
+      AgentTool: '派发子代理', TodoWrite: '更新任务清单',
+    };
+    const action = actions[name] || `调用 ${name}`;
+    return arg ? `${action} ${arg}` : action;
+  }
+
   function onToolInvocationBegin(msg) {
     // DEFECT-CARD-PER-STEP (CEO 2026-08-18): 每个工具 = 时序里独立一张卡（trilc chat
     // 卡片式），不再聚进一个「工具调用」组卡。先把手头流式叙述文本定稿成独立文本卡，
@@ -1605,7 +1632,7 @@
 
     const nameEl = document.createElement('span');
     nameEl.className = 'toolName';
-    nameEl.textContent = String(msg.toolName || 'tool');
+    nameEl.textContent = toolCallBrief(msg.toolName, msg.inputPreview);
 
     const statusEl = document.createElement('span');
     statusEl.className = 'toolStatus toolStatus-running';

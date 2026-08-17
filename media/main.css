@@ -1128,6 +1128,12 @@ body {
   font-family: var(--vscode-font-family);
   font-size: 12px;
   color: var(--vscode-foreground);
+  /* DEFECT-TOOL-BRIEF: summary line now carries the call brief (action + arg);
+     keep one line with ellipsis when the path/pattern is long. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .toolStatus {
