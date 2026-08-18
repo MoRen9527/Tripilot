@@ -1630,15 +1630,36 @@
     }
   }
 
-  // 工具输出优先用结构化结果里的 formatted 字段（LS/目录列表自带排版好的表格），
-  // 没有才显示原始文本/JSON（CEO 五轮复测：不想看几十 KB 裸 JSON）。
+  // 工具输出友好化（CEO 六轮）：按结果结构分流——
+  //   Read {content}            → 直接展示文件内容（自带行号）
+  //   LS   {formatted 有换行}    → 排版好的表格；{entries} → 目录/文件分行
+  //   shell {exitCode/stdout/stderr} → 分段 [stdout]/[stderr]/[exit n·ms]
+  //   其他                      → 原文
   function formatToolOutput(raw) {
     const s = String(raw || '');
     if (s.startsWith('{') || s.startsWith('[')) {
       try {
         const obj = JSON.parse(s);
+        if (obj && typeof obj.content === 'string' && obj.content.trim()) {
+          return obj.content;
+        }
+        if (obj && typeof obj.formatted === 'string' && obj.formatted.includes('\n') && obj.formatted.trim()) {
+          return obj.formatted;
+        }
+        if (obj && Array.isArray(obj.entries)) {
+          return obj.entries
+            .map((e) => (String(e && e.type) === 'directory' ? `${e.name}/` : String((e && e.name) ?? '')))
+            .join('\n');
+        }
         if (obj && typeof obj.formatted === 'string' && obj.formatted.trim()) {
           return obj.formatted;
+        }
+        if (obj && (typeof obj.exitCode === 'number' || typeof obj.stdout === 'string' || typeof obj.stderr === 'string')) {
+          const parts = [];
+          if (obj.stdout && String(obj.stdout).trim()) parts.push('[stdout]\n' + obj.stdout);
+          if (obj.stderr && String(obj.stderr).trim()) parts.push('[stderr]\n' + obj.stderr);
+          parts.push(`[exit ${obj.exitCode ?? '?'}${obj.durationMs != null ? ` · ${obj.durationMs}ms` : ''}${obj.timedOut ? ' · 超时' : ''}]`);
+          return parts.join('\n\n');
         }
       } catch { /* not JSON — fall through */ }
     }
@@ -1685,9 +1706,20 @@
         ? `正在调用: ${latestBrief}`
         : `正在调用工具（${g.runningCount}）`;
     } else {
+      // 收尾摘要带工具汇总（CEO 六轮：工具跑得快，动态过程看不清——摘要补足）
+      let summary = '';
+      try {
+        const names = Array.from(g.listEl?.children || []).map((c) => c.dataset?.toolName || '?');
+        const counts = {};
+        for (const n of names) counts[n] = (counts[n] || 0) + 1;
+        summary = Object.entries(counts).map(([n, c]) => (c > 1 ? `${n}×${c}` : n)).join(' · ');
+        if (summary.length > 80) summary = summary.slice(0, 80) + '…';
+      } catch { /* summary is best-effort */ }
       const fail = g.failedCount > 0 ? `，${g.failedCount} 失败` : '';
       g.iconEl.className = `codicon ${g.failedCount > 0 ? 'codicon-error' : 'codicon-check'} toolGroupIcon ${g.failedCount > 0 ? 'toolGroupIcon-error' : 'toolGroupIcon-done'}`;
-      g.textEl.textContent = `已调用工具（${g.count}${fail}）`;
+      g.textEl.textContent = summary
+        ? `已调用工具（${g.count}${fail}）: ${summary}`
+        : `已调用工具（${g.count}${fail}）`;
     }
   }
 
