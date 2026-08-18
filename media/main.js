@@ -1577,31 +1577,46 @@
   // 2026-08-18): tools render as one card each in time order (trilc chat style),
   // no shared group container.
 
-  // DEFECT-TOOL-BRIEF (CEO 2026-08-18): 卡片摘要行给调用简介（同 trilc TUI
-  // ToolCallLine 风格），不只显示 "Read 运行中"。
+  // DEFECT-TOOL-BRIEF v2 (CEO 2026-08-18 复审): 标题保持原工具名 + 简化对象
+  // （如 "Bash: cat host-object-manifest.json"、"Read: host-object-manifest.json"），
+  // 不译成中文动作词。路径只留尾段，命令保留原文（压空白）。
   function toolCallBrief(toolName, inputPreviewJson) {
     const name = String(toolName || 'tool');
     const trunc = (s, n) => (String(s).length > n ? String(s).slice(0, n) + '…' : String(s));
     let arg = '';
     try {
       const obj = JSON.parse(String(inputPreviewJson || '{}'));
-      const p = obj.file_path || obj.path || obj.filePath || obj.absolute_path;
-      if (p) arg = trunc(p, 70);
-      else if (obj.command || obj.cmd) arg = trunc(obj.command || obj.cmd, 60);
-      else if (obj.pattern) arg = trunc(obj.pattern, 50);
-      else if (obj.prompt) arg = trunc(obj.prompt, 60);
-      else {
+      const cmd = obj.command || obj.cmd;
+      const p = String(obj.file_path || obj.path || obj.filePath || obj.absolute_path || '');
+      if (cmd) {
+        arg = trunc(String(cmd).replace(/\s+/g, ' ').trim(), 60);
+      } else if (p) {
+        const segs = p.replace(/\\/g, '/').split('/').filter(Boolean);
+        arg = segs.length ? segs[segs.length - 1] : p;
+      } else if (obj.pattern) {
+        arg = trunc(obj.pattern, 40);
+      } else if (obj.prompt) {
+        arg = trunc(obj.prompt, 50);
+      } else {
         arg = Object.entries(obj).slice(0, 2)
-          .map(([k, v]) => `${k}: ${trunc(v, 30)}`).join(', ');
+          .map(([k, v]) => `${k}: ${trunc(v, 25)}`).join(', ');
       }
     } catch { /* unparseable preview — fall back to name only */ }
-    const actions = {
-      Read: '读取文件', Write: '写入文件', Edit: '编辑文件', Bash: '执行命令',
-      shell_exec: '执行命令', Grep: '搜索内容', Glob: '查找文件', LS: '列目录',
-      AgentTool: '派发子代理', TodoWrite: '更新任务清单',
-    };
-    const action = actions[name] || `调用 ${name}`;
-    return arg ? `${action} ${arg}` : action;
+    return arg ? `${name}: ${arg}` : name;
+  }
+
+  // 卡内部输入不裸 JSON：逐键值展示（值解码、去引号转义），超长截断。
+  function formatToolInput(json) {
+    try {
+      const obj = JSON.parse(String(json || '{}'));
+      const lines = Object.entries(obj).map(([k, v]) => {
+        const s = typeof v === 'string' ? v : JSON.stringify(v);
+        return `${k}: ${s.length > 500 ? s.slice(0, 500) + '…' : s}`;
+      });
+      return lines.length ? lines.join('\n') : String(json || '');
+    } catch {
+      return String(json || '');
+    }
   }
 
   function onToolInvocationBegin(msg) {
@@ -1645,7 +1660,7 @@
     if (msg.inputPreview) {
       const pre = document.createElement('pre');
       pre.className = 'toolCode toolInput';
-      pre.textContent = String(msg.inputPreview);
+      pre.textContent = formatToolInput(msg.inputPreview);
       root.appendChild(pre);
     }
 
@@ -1892,6 +1907,20 @@
 
   let streamingAssistantBodyEl = null;
 	let streamingAssistantMarkdown = '';
+  let streamingRenderTimer = null;
+
+  // UX (CEO 2026-08-18): 流式期间就渲染 markdown（~120ms 节流），消除
+  // 「先出现原始 markdown 格式、几秒后才被渲染」的闪跳。不完整的块（如半张
+  // 表格/未闭合围栏）在流中会先按普通段落呈现，随内容到达自动修正。
+  function scheduleStreamingRender() {
+    if (streamingRenderTimer) return;
+    streamingRenderTimer = setTimeout(() => {
+      streamingRenderTimer = null;
+      if (streamingAssistantBodyEl && streamingAssistantMarkdown) {
+        renderMarkdownInto(streamingAssistantBodyEl, streamingAssistantMarkdown);
+      }
+    }, 120);
+  }
 
   function startAssistantStream(initialText) {
     // If a stream is already active, keep appending into it.
@@ -1927,7 +1956,7 @@
       startAssistantStream('');
     }
 	streamingAssistantMarkdown = (streamingAssistantMarkdown || '') + String(delta || '');
-	streamingAssistantBodyEl.textContent = streamingAssistantMarkdown;
+	scheduleStreamingRender();
     messagesEl.scrollTop = messagesEl.scrollHeight;
 
 	lastMessageRole = 'assistant';
@@ -3070,6 +3099,7 @@
         return;
       case 'chatReset':
         if (messagesEl) messagesEl.innerHTML = '';
+		if (streamingRenderTimer) { clearTimeout(streamingRenderTimer); streamingRenderTimer = null; }
 		streamingAssistantBodyEl = null;
     streamingAssistantMarkdown = '';
 		toolInvocations.clear();
@@ -3104,7 +3134,8 @@
 		appendAssistantDelta(msg.delta);
 		return;
 	  case 'chatAssistantEnd':
-    // Finalize markdown rendering.
+    // Finalize markdown rendering (flush any pending throttled render first).
+    if (streamingRenderTimer) { clearTimeout(streamingRenderTimer); streamingRenderTimer = null; }
     renderMarkdownInto(streamingAssistantBodyEl, streamingAssistantMarkdown);
     streamingAssistantBodyEl = null;
     streamingAssistantMarkdown = '';
