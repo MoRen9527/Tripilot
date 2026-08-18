@@ -1619,17 +1619,32 @@
     }
   }
 
-  function onToolInvocationBegin(msg) {
-    // DEFECT-CARD-PER-STEP (CEO 2026-08-18): 每个工具 = 时序里独立一张卡（trilc chat
-    // 卡片式），不再聚进一个「工具调用」组卡。先把手头流式叙述文本定稿成独立文本卡，
-    // 让「叙述卡 → 工具卡 → … → 结论卡」按时序排布。
-    if (streamingAssistantBodyEl && (streamingAssistantMarkdown || '').trim()) {
-      renderMarkdownInto(streamingAssistantBodyEl, streamingAssistantMarkdown);
-    }
-    streamingAssistantBodyEl = null;
-    streamingAssistantMarkdown = '';
+  // CEO step-group (2026-08-18 三轮): 叙述文本 = 组卡标题；其后工具调用归入该组
+  // 卡内部（内部工具卡结构不变）。新叙述开新组；最后一段无工具跟随的叙述 = 结论卡。
+  let toolGroupCard = null; // { item, listEl }
 
-    const { item: _card, body: cardBody } = appendPartContainer({ kind: 'tools', title: null });
+  function onToolInvocationBegin(msg) {
+    let titleMd = '';
+    if (streamingAssistantBodyEl && (streamingAssistantMarkdown || '').trim()) {
+      titleMd = streamingAssistantMarkdown;
+      streamingAssistantBodyEl.remove(); // 叙述气泡升级为组标题，不再独立成卡
+      if (streamingRenderTimer) { clearTimeout(streamingRenderTimer); streamingRenderTimer = null; }
+      streamingAssistantBodyEl = null;
+      streamingAssistantMarkdown = '';
+    }
+    if (titleMd || !toolGroupCard) {
+      const { item, body } = appendPartContainer({ kind: 'tools', title: null });
+      if (titleMd) {
+        const t = document.createElement('div');
+        t.className = 'toolGroupTitle';
+        renderMarkdownInto(t, titleMd);
+        body.appendChild(t);
+      }
+      const list = document.createElement('div');
+      list.className = 'toolGroupList';
+      body.appendChild(list);
+      toolGroupCard = { item, listEl: list };
+    }
 
     const id = String(msg.invocationId || '');
 
@@ -1637,6 +1652,7 @@
     root.className = 'toolInvocation';
     root.open = false;
     root.dataset.invocationId = id;
+    root.dataset.toolName = String(msg.toolName || 'tool');
 
     const summary = document.createElement('summary');
     summary.className = 'toolInvocationSummary';
@@ -1669,7 +1685,7 @@
     out.textContent = '';
     root.appendChild(out);
 
-    cardBody.appendChild(root);
+    toolGroupCard.listEl.appendChild(root);
     messagesEl.scrollTop = messagesEl.scrollHeight;
 
     if (id) toolInvocations.set(id, { statusEl, outputEl: out, rootEl: root });
@@ -1685,7 +1701,17 @@
 
   function onToolInvocationEnd(msg) {
     const id = String(msg.invocationId || '');
-    const record = id ? toolInvocations.get(id) : null;
+    let record = id ? toolInvocations.get(id) : null;
+    if (!record) {
+      // fallback：老 daemon 无 id 时按「同名工具最早未完成卡」对齐
+      const name = String(msg.toolName || '');
+      for (const rec of toolInvocations.values()) {
+        if (rec.rootEl?.dataset?.toolName === name && rec.statusEl?.classList?.contains('toolStatus-running')) {
+          record = rec;
+          break;
+        }
+      }
+    }
     const ok = !!msg.ok;
     const durationMs = typeof msg.durationMs === 'number' ? msg.durationMs : null;
 
@@ -1953,6 +1979,7 @@
 
   function appendAssistantDelta(delta) {
     if (!streamingAssistantBodyEl) {
+      toolGroupCard = null; // 新叙述开始 → 当前工具组收口（后续工具开新组）
       startAssistantStream('');
     }
 	streamingAssistantMarkdown = (streamingAssistantMarkdown || '') + String(delta || '');
@@ -3102,6 +3129,7 @@
 		if (streamingRenderTimer) { clearTimeout(streamingRenderTimer); streamingRenderTimer = null; }
 		streamingAssistantBodyEl = null;
     streamingAssistantMarkdown = '';
+    toolGroupCard = null;
 		toolInvocations.clear();
 		lastTodoCardEl = null;
 		pendingEditsCardByRequestId = new Map();

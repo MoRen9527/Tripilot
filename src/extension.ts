@@ -6582,8 +6582,10 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 					streamedText += content;
 					this.postToHost(state, { type: 'chatAssistantDelta', delta: content });
 				},
-				onToolUse: (toolName: string, input: Record<string, unknown>) => {
-					const invocationId = `call_${crypto.randomUUID()}`;
+				onToolUse: (toolName: string, input: Record<string, unknown>, id?: string) => {
+					// Daemon now echoes the agent-core tool_call id — use it so
+					// tool_result can match its invocation and flip the card status.
+					const invocationId = id ? `call_${id}` : `call_${crypto.randomUUID()}`;
 					this.postToHost(state, {
 						type: 'chatToolInvocationBegin',
 						invocationId,
@@ -6591,12 +6593,13 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 						inputPreview: JSON.stringify(input).slice(0, 200),
 					});
 				},
-				onToolResult: (toolName: string, output: string, durationMs?: number) => {
-					// Note: invocationId matching is best-effort since TriLC doesn't echo it back.
-					const shortId = (conversationId ?? 'unknown').slice(-8);
+				onToolResult: (toolName: string, output: string, durationMs?: number, id?: string) => {
+					// Match by daemon tool_call_id; random-UUID fallback (old daemon)
+					// keeps the old best-effort behavior.
+					const invocationId = id ? `call_${id}` : `call_${(conversationId ?? 'unknown').slice(-8)}`;
 					this.postToHost(state, {
 						type: 'chatToolInvocationEnd',
-						invocationId: `call_${shortId}`,
+						invocationId,
 						toolName,
 						ok: !output.startsWith('Error:'),
 						outputPreview: output.slice(0, 200),

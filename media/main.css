@@ -1009,6 +1009,26 @@ body {
   box-sizing: border-box;
 }
 
+/* CEO step-group (2026-08-18): narration = group card title, tools inside */
+.toolGroupTitle {
+  padding: 2px 0 6px;
+  font-size: 12px;
+}
+
+.toolGroupTitle.md p {
+  margin: 0 0 2px;
+}
+
+.toolGroupTitle.md p:last-child {
+  margin-bottom: 0;
+}
+
+.toolGroupList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .md pre code {
   background: transparent;
   padding: 0;

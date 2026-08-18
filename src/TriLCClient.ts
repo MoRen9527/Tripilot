@@ -129,8 +129,8 @@ export interface SSETaskErrorEvent {
 
 export interface StreamCallbacks {
   onDelta?: (content: string) => void;
-  onToolUse?: (toolName: string, input: Record<string, unknown>) => void;
-  onToolResult?: (toolName: string, output: string, durationMs?: number) => void;
+  onToolUse?: (toolName: string, input: Record<string, unknown>, id?: string) => void;
+  onToolResult?: (toolName: string, output: string, durationMs?: number, id?: string) => void;
   onTaskProgress?: (step: number, totalSteps: number, description: string) => void;
   onTaskDone?: (summary: string) => void;
   onTaskError?: (error: string) => void;
@@ -374,10 +374,10 @@ export class TriLCClient {
           callbacks.onDelta?.(parsed.content ?? '');
           break;
         case 'tool_use':
-          callbacks.onToolUse?.(parsed.toolName ?? 'unknown', parsed.input ?? {});
+          callbacks.onToolUse?.(parsed.toolName ?? 'unknown', parsed.input ?? {}, typeof parsed.id === 'string' ? parsed.id : undefined);
           break;
         case 'tool_result':
-          callbacks.onToolResult?.(parsed.toolName ?? 'unknown', parsed.output ?? '', parsed.durationMs);
+          callbacks.onToolResult?.(parsed.toolName ?? 'unknown', parsed.output ?? '', parsed.durationMs, typeof parsed.id === 'string' ? parsed.id : undefined);
           break;
         case 'task_progress':
           callbacks.onTaskProgress?.(parsed.step ?? 0, parsed.totalSteps ?? 0, parsed.description ?? '');
