@@ -2106,6 +2106,65 @@
     if (!replayHostState.active) uiAction('requestSubagentTree');
   }
 
+  // ── /demo-tools：工具调用动态演示（纯本地，无 daemon/模型）──
+  // 驱动与真实链路完全相同的内部函数（流式文本/工具卡/组头动态/失败样式），
+  // 每步带延时，让「正在调用: X → 已调用工具（n）」的动态过程可见。
+  function runToolDynamicsDemo() {
+    appendMessage('user', '/demo-tools — 演示工具调用动态');
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const streamText = async (text, chunkMs = 60) => {
+      const chunks = text.match(/[\s\S]{1,24}/g) || [];
+      for (const c of chunks) {
+        appendAssistantDelta(c);
+        await sleep(chunkMs);
+      }
+    };
+    const runTool = async (invocationId, toolName, input, output, ok, ms) => {
+      onToolInvocationBegin({ invocationId, toolName, inputPreview: JSON.stringify(input) });
+      await sleep(ms);
+      onToolInvocationEnd({ invocationId, toolName, ok, durationMs: ms, outputFull: output });
+      await sleep(350); // 收尾态可见间隔
+    };
+    const finish = () => {
+      if (streamingRenderTimer) { clearTimeout(streamingRenderTimer); streamingRenderTimer = null; }
+      renderMarkdownInto(streamingAssistantBodyEl, streamingAssistantMarkdown);
+      streamingAssistantBodyEl = null;
+      streamingAssistantMarkdown = '';
+      setStatus('idle');
+    };
+    (async () => {
+      setStatus('thinking');
+      await sleep(300);
+      await streamText('我先摸一下当前工作区和关键真源文件的落地状况，再做判断。\n\n');
+      await runTool('call_demo_1', 'LS',
+        { path: 'd:\\Code\\ai\\TriMetaverse WorkTree', detailed: true },
+        JSON.stringify({ path: 'd:\\Code\\ai\\TriMetaverse WorkTree', entries: [
+          { name: '.claude', type: 'directory' }, { name: 'docs', type: 'directory' },
+          { name: 'scripts', type: 'directory' }, { name: '.gitignore', type: 'file' },
+          { name: 'CLAUDE.md', type: 'file' }, { name: 'project.md', type: 'file' },
+        ], formatted: 'Type      Size      Name\n─────────────────────────\nDIR       -         .claude\nDIR       -         docs\nDIR       -         scripts\nFILE      215 B     .gitignore\nFILE      5.0 KB    CLAUDE.md\nFILE      17.0 KB   project.md' }),
+        true, 1600);
+      await runTool('call_demo_2', 'Read',
+        { file_path: 'd:\\Code\\ai\\TriMetaverse WorkTree\\project.md' },
+        JSON.stringify({ file_path: 'd:\\Code\\ai\\TriMetaverse WorkTree\\project.md', num_lines: 343, content: '     1\t# TriMetaverse Project Workflow（演示节选）\n     2\t\n     3\t版本：v0.1（/demo-tools 模拟数据）\n     4\t\n    10\t## 1. 总体原则\n    13\t- 全流程采用「主线阶段串行、分支内串行」的编排方式。' }),
+        true, 1200);
+      await streamText('让我核对几个关键点：.git 文件性质（确认是否 worktree）与 git 状态。\n\n');
+      await runTool('call_demo_3', 'Bash',
+        { command: 'git rev-parse --git-dir' },
+        JSON.stringify({ exitCode: 0, stdout: 'D:/Code/ai/TriMetaverse/.git/worktrees/TriMetaverse WorkTree\n', stderr: '', durationMs: 210 }),
+        true, 1000);
+      await runTool('call_demo_4', 'Grep',
+        { pattern: 'bindingTimestamp' },
+        JSON.stringify({ exitCode: 1, stdout: '', stderr: 'pattern not found in 3 files (demo simulated failure)\n', durationMs: 890 }),
+        false, 1400);
+      await streamText(
+        '核查完成（演示数据）。结论示例：\n\n' +
+        '| 检查项 | 结果 | 说明 |\n| --- | --- | --- |\n| worktree 关联 | ✅ | .git 指向主仓 worktree |\n| 关键字命中 | ❌ | bindingTimestamp 未找到（模拟失败） |\n\n' +
+        '以上由 `/demo-tools` 本地生成，用于观察：组头动态标题、工具卡状态翻转、失败红色样式、markdown 流式渲染与表格定稿。\n', 40);
+      finish();
+    })().catch(() => finish());
+  }
+
   function sendCurrent() {
     const text = (inputEl.value || '').trim();
     if (!text) return;
@@ -2113,6 +2172,12 @@
 	hideRedoOffer();
     inputEl.value = '';
     autoResize();
+    // /demo-tools：本地模拟工具调用动态（不走 daemon/模型）——体验与回归
+    // 组卡动态头/状态翻转/失败样式/markdown 流式渲染（CEO 六轮 2026-08-18）。
+    if (/^\/demo-tools?\b/i.test(text)) {
+      runToolDynamicsDemo();
+      return;
+    }
 	// Copilot-like: after sending a user message, Continue becomes unavailable immediately.
 	lastMessageRole = 'user';
 	updateContinueButton();
