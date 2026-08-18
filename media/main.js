@@ -1619,32 +1619,59 @@
     }
   }
 
-  // CEO step-group (2026-08-18 三轮): 叙述文本 = 组卡标题；其后工具调用归入该组
-  // 卡内部（内部工具卡结构不变）。新叙述开新组；最后一段无工具跟随的叙述 = 结论卡。
-  let toolGroupCard = null; // { item, listEl }
+  // CEO step-group v2 (2026-08-18 四轮): 叙述回归正文文本卡；工具调用聚合为一张
+  // 组卡——组头 = 状态图标 + 动态标题（随当前调用变化：正在调用: Read: x → 已调用
+  // 工具（n）），组内是各工具卡（现成结构不动）。新叙述开新组。
+  let toolGroupCard = null; // { item, iconEl, textEl, listEl, count, runningCount, failedCount }
+
+  function ensureToolGroup() {
+    if (toolGroupCard && toolGroupCard.item && messagesEl.contains(toolGroupCard.item)) {
+      return toolGroupCard;
+    }
+    const { item, body } = appendPartContainer({ kind: 'tools', title: null });
+    const header = document.createElement('div');
+    header.className = 'toolGroupHeader';
+    const icon = document.createElement('span');
+    icon.className = 'codicon codicon-sync toolGroupIcon toolGroupIcon-running';
+    const text = document.createElement('span');
+    text.className = 'toolGroupTitleText';
+    text.textContent = '正在调用工具…';
+    header.appendChild(icon);
+    header.appendChild(text);
+    const list = document.createElement('div');
+    list.className = 'toolGroupList';
+    body.appendChild(header);
+    body.appendChild(list);
+    toolGroupCard = { item, iconEl: icon, textEl: text, listEl: list, count: 0, runningCount: 0, failedCount: 0 };
+    return toolGroupCard;
+  }
+
+  function updateToolGroupHeader(g, latestBrief) {
+    if (!g || !g.textEl) return;
+    if (g.runningCount > 0) {
+      g.iconEl.className = 'codicon codicon-sync toolGroupIcon toolGroupIcon-running';
+      g.textEl.textContent = latestBrief
+        ? `正在调用: ${latestBrief}`
+        : `正在调用工具（${g.runningCount}）`;
+    } else {
+      const fail = g.failedCount > 0 ? `，${g.failedCount} 失败` : '';
+      g.iconEl.className = `codicon ${g.failedCount > 0 ? 'codicon-error' : 'codicon-check'} toolGroupIcon ${g.failedCount > 0 ? 'toolGroupIcon-error' : 'toolGroupIcon-done'}`;
+      g.textEl.textContent = `已调用工具（${g.count}${fail}）`;
+    }
+  }
 
   function onToolInvocationBegin(msg) {
-    let titleMd = '';
+    // 叙述定稿为独立正文文本卡（不做组标题）
     if (streamingAssistantBodyEl && (streamingAssistantMarkdown || '').trim()) {
-      titleMd = streamingAssistantMarkdown;
-      streamingAssistantBodyEl.remove(); // 叙述气泡升级为组标题，不再独立成卡
-      if (streamingRenderTimer) { clearTimeout(streamingRenderTimer); streamingRenderTimer = null; }
-      streamingAssistantBodyEl = null;
-      streamingAssistantMarkdown = '';
+      renderMarkdownInto(streamingAssistantBodyEl, streamingAssistantMarkdown);
     }
-    if (titleMd || !toolGroupCard) {
-      const { item, body } = appendPartContainer({ kind: 'tools', title: null });
-      if (titleMd) {
-        const t = document.createElement('div');
-        t.className = 'toolGroupTitle';
-        renderMarkdownInto(t, titleMd);
-        body.appendChild(t);
-      }
-      const list = document.createElement('div');
-      list.className = 'toolGroupList';
-      body.appendChild(list);
-      toolGroupCard = { item, listEl: list };
-    }
+    if (streamingRenderTimer) { clearTimeout(streamingRenderTimer); streamingRenderTimer = null; }
+    streamingAssistantBodyEl = null;
+    streamingAssistantMarkdown = '';
+
+    const g = ensureToolGroup();
+    g.count++;
+    g.runningCount++;
 
     const id = String(msg.invocationId || '');
 
@@ -1685,10 +1712,11 @@
     out.textContent = '';
     root.appendChild(out);
 
-    toolGroupCard.listEl.appendChild(root);
+    g.listEl.appendChild(root);
+    updateToolGroupHeader(g, toolCallBrief(msg.toolName, msg.inputPreview));
     messagesEl.scrollTop = messagesEl.scrollHeight;
 
-    if (id) toolInvocations.set(id, { statusEl, outputEl: out, rootEl: root });
+    if (id) toolInvocations.set(id, { statusEl, outputEl: out, rootEl: root, group: g });
     if (id) {
       sceneToolInvocations.set(id, {
         toolName: String(msg.toolName || 'tool'),
@@ -1714,6 +1742,14 @@
     }
     const ok = !!msg.ok;
     const durationMs = typeof msg.durationMs === 'number' ? msg.durationMs : null;
+
+    // 组头计数挂在工具卡所属的组上（新叙述已开新组时不误记到新组）
+    const grp = record?.group ?? toolGroupCard;
+    if (grp) {
+      grp.runningCount = Math.max(0, (grp.runningCount || 0) - 1);
+      if (!ok) grp.failedCount = (grp.failedCount || 0) + 1;
+      updateToolGroupHeader(grp);
+    }
 
     if (record) {
       record.statusEl.classList.remove('toolStatus-running');

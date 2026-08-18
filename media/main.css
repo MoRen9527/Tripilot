@@ -1009,18 +1009,41 @@ body {
   box-sizing: border-box;
 }
 
-/* CEO step-group (2026-08-18): narration = group card title, tools inside */
-.toolGroupTitle {
+/* CEO step-group v2 (2026-08-18): dynamic status header + tools inside */
+.toolGroupHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 2px 0 6px;
   font-size: 12px;
 }
 
-.toolGroupTitle.md p {
-  margin: 0 0 2px;
+.toolGroupTitleText {
+  color: var(--vscode-descriptionForeground);
 }
 
-.toolGroupTitle.md p:last-child {
-  margin-bottom: 0;
+.toolGroupIcon {
+  font-size: 13px;
+}
+
+.toolGroupIcon-running {
+  color: var(--vscode-charts-blue, #3794ff);
+  display: inline-block;
+  animation: toolIconSpin 1s linear infinite;
+}
+
+.toolGroupIcon-done {
+  color: var(--vscode-charts-green, #3fb950);
+}
+
+.toolGroupIcon-error {
+  color: var(--vscode-charts-red, #f85149);
+}
+
+@keyframes toolIconSpin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .toolGroupList {
