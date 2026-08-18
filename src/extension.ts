@@ -6607,6 +6607,12 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 						durationMs,
 					});
 				},
+				onTaskProgress: (step: number, totalSteps: number, description: string) => {
+					// v2g：收尾/压缩等阶段提示透传到状态栏（掐断后强制结论期间面板不再无反馈）
+					if (description) {
+						this.setAndPostStatus(state, 'thinking', description);
+					}
+				},
 				onTaskDone: (summary: string) => {
 					if (didStreamAssistant) {
 						this.postToHost(state, { type: 'chatAssistantEnd' });
