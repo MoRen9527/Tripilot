@@ -1577,6 +1577,17 @@
   // 2026-08-18): tools render as one card each in time order (trilc chat style),
   // no shared group container.
 
+  // 双重 parse 防御：输入可能被 stringify 两层（老 daemon 发 JSON 字符串）。
+  // parse 回来是字符串就再 parse 一次；还是字符串就当原文用。
+  function parseToolArgsDeep(json) {
+    let v = json;
+    for (let i = 0; i < 2; i++) {
+      if (typeof v !== 'string') break;
+      try { v = JSON.parse(v); } catch { return {}; }
+    }
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  }
+
   // DEFECT-TOOL-BRIEF v2 (CEO 2026-08-18 复审): 标题保持原工具名 + 简化对象
   // （如 "Bash: cat host-object-manifest.json"、"Read: host-object-manifest.json"），
   // 不译成中文动作词。路径只留尾段，命令保留原文（压空白）。
@@ -1585,7 +1596,7 @@
     const trunc = (s, n) => (String(s).length > n ? String(s).slice(0, n) + '…' : String(s));
     let arg = '';
     try {
-      const obj = JSON.parse(String(inputPreviewJson || '{}'));
+      const obj = parseToolArgsDeep(inputPreviewJson);
       const cmd = obj.command || obj.cmd;
       const p = String(obj.file_path || obj.path || obj.filePath || obj.absolute_path || '');
       if (cmd) {
@@ -1608,7 +1619,7 @@
   // 卡内部输入不裸 JSON：逐键值展示（值解码、去引号转义），超长截断。
   function formatToolInput(json) {
     try {
-      const obj = JSON.parse(String(json || '{}'));
+      const obj = parseToolArgsDeep(json);
       const lines = Object.entries(obj).map(([k, v]) => {
         const s = typeof v === 'string' ? v : JSON.stringify(v);
         return `${k}: ${s.length > 500 ? s.slice(0, 500) + '…' : s}`;
@@ -1617,6 +1628,21 @@
     } catch {
       return String(json || '');
     }
+  }
+
+  // 工具输出优先用结构化结果里的 formatted 字段（LS/目录列表自带排版好的表格），
+  // 没有才显示原始文本/JSON（CEO 五轮复测：不想看几十 KB 裸 JSON）。
+  function formatToolOutput(raw) {
+    const s = String(raw || '');
+    if (s.startsWith('{') || s.startsWith('[')) {
+      try {
+        const obj = JSON.parse(s);
+        if (obj && typeof obj.formatted === 'string' && obj.formatted.trim()) {
+          return obj.formatted;
+        }
+      } catch { /* not JSON — fall through */ }
+    }
+    return s;
   }
 
   // CEO step-group v2 (2026-08-18 四轮): 叙述回归正文文本卡；工具调用聚合为一张
@@ -1629,7 +1655,11 @@
       return toolGroupCard;
     }
     const { item, body } = appendPartContainer({ kind: 'tools', title: null });
-    const header = document.createElement('div');
+    // 组卡默认折叠（CEO 五轮）：动态状态摘要做 <summary>，展开才见内部工具卡
+    const wrap = document.createElement('details');
+    wrap.className = 'toolGroupWrap';
+    wrap.open = false;
+    const header = document.createElement('summary');
     header.className = 'toolGroupHeader';
     const icon = document.createElement('span');
     icon.className = 'codicon codicon-sync toolGroupIcon toolGroupIcon-running';
@@ -1638,10 +1668,11 @@
     text.textContent = '正在调用工具…';
     header.appendChild(icon);
     header.appendChild(text);
+    wrap.appendChild(header);
     const list = document.createElement('div');
     list.className = 'toolGroupList';
-    body.appendChild(header);
-    body.appendChild(list);
+    wrap.appendChild(list);
+    body.appendChild(wrap);
     toolGroupCard = { item, iconEl: icon, textEl: text, listEl: list, count: 0, runningCount: 0, failedCount: 0 };
     return toolGroupCard;
   }
@@ -1760,7 +1791,7 @@
         : (durationMs != null ? `失败（${Math.round(durationMs)}ms）` : '失败');
 
       if (msg.outputFull || msg.outputPreview) {
-        record.outputEl.textContent = String(msg.outputFull || msg.outputPreview || '');
+        record.outputEl.textContent = formatToolOutput(msg.outputFull || msg.outputPreview || '');
       }
     }
 

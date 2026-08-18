@@ -1009,13 +1009,23 @@ body {
   box-sizing: border-box;
 }
 
-/* CEO step-group v2 (2026-08-18): dynamic status header + tools inside */
+/* CEO step-group v2 (2026-08-18): dynamic status header + tools inside; group collapsed by default */
+.toolGroupWrap {
+  margin: 0;
+}
+
 .toolGroupHeader {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 2px 0 6px;
+  padding: 2px 0 4px;
   font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.toolGroupHeader::-webkit-details-marker {
+  color: var(--vscode-descriptionForeground);
 }
 
 .toolGroupTitleText {
@@ -1050,6 +1060,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  padding: 2px 0 4px 10px;
 }
 
 .md pre code {
