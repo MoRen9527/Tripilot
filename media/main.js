@@ -3015,7 +3015,7 @@
         blocks.push('<div class="initCheck initCheckOk">项目已关联 ✓ — ' + escapeHtml(String(pl.projectKey || '?')) + ' · worktree：' + escapeHtml(String(pl.worktreePath || '?')) + '</div>');
         blocks.push('<div class="initCardActions"><button id="initCardRunSync">开始五维同步 →</button></div>');
       } else if (cs === 'project-link') {
-        blocks.push('<div class="initCheck">项目关联：待进行（trilc chat 在项目目录运行可认领/建立）</div>');
+        blocks.push('<div class="initCheck">项目关联：自动认领当前工作区中…（失败可在 trilc chat 项目目录运行认领/建立）</div>');
       }
       if (onboarding && onboarding.ceoName && Array.isArray(onboarding.employees) && onboarding.employees.length) {
         blocks.push('<div class="initCheck initCheckOk">公司已开张 ✓</div>');

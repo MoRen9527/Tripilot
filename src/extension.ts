@@ -1079,7 +1079,8 @@ export function activate(context: vscode.ExtensionContext) {
 				detached: true,
 				stdio: 'ignore',
 				shell: control.shell,
-				env: control.env
+				env: control.env,
+				windowsHide: true // CEO 2026-08-18：shell:true 走 cmd.exe 必闪黑框
 			});
 			triLCAutoStartControl = { ...control, port };
 			debugChannel.appendLine(`[TriLC] auto-start requested via ${control.source} on port ${port}`);
@@ -1502,7 +1503,8 @@ export function deactivate() {
 				detached: true,
 				stdio: 'ignore',
 				shell: control.shell,
-				env: control.env
+				env: control.env,
+				windowsHide: true // CEO 2026-08-18：同上，防黑框
 			});
 			child.unref();
 		} catch {
@@ -2907,6 +2909,8 @@ class TripilotSettingsPanel {
 }
 
 class TripilotChatViewProvider implements vscode.WebviewViewProvider {
+	// 开张后自动衔接项目初始化：每会话只自动认领一次（防轮询重复触发）
+	private initAutoClaimTried = false;
 	public static readonly viewType = 'tripilot.chatView';
 	private static activeInstance?: TripilotChatViewProvider;
 
@@ -3142,6 +3146,38 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 			}
 		} catch {
 			// daemon 不可达：卡片保留默认帧（chainState uninitialized → 呈现层隐藏/离线提示）
+		}
+		// 开张后自动衔接项目初始化（CEO 2026-08-19：两入口对等——trilc chat v2.1 开张后
+		// 自动串联项目流程，TriPilot 同样不把活推给另一入口）：
+		// 链态 project-link 且未关联 → 自动 inspect+claim 当前工作区（每会话只试一次）。
+		if (card.chainState === 'project-link'
+			&& !(card.projectLink && (card.projectLink as any).status === 'linked')
+			&& !this.initAutoClaimTried) {
+			this.initAutoClaimTried = true;
+			const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+			if (wsRoot) {
+				try {
+					const claimRes = await fetch(`${baseUrl}/internal/v1/projects/claim`, {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({ path: wsRoot }),
+						signal: AbortSignal.timeout(20_000),
+					});
+					const claimJson = await claimRes.json().catch(() => null);
+					if (claimRes.ok && claimJson?.ok) {
+						// 认领成功 → 重拉 chain/status 取 linked 快照（claim 零 git 写，安全幂等）
+						const res2 = await fetch(`${baseUrl}/internal/v1/init/chain/status`, { signal: AbortSignal.timeout(8_000) });
+						if (res2.ok) {
+							const json2 = await res2.json() as any;
+							const pl2 = json2?.phaseDetail?.['project-link'];
+							if (pl2) card.projectLink = pl2;
+							if (json2?.chainState) card.chainState = String(json2.chainState);
+						}
+					}
+				} catch {
+					// 自动认领失败 → 卡片保持「待进行」，用户可走手动流程
+				}
+			}
 		}
 		// i4-2 §二.4：sync/status 投影（零本地执行——只读拉取）
 		try {

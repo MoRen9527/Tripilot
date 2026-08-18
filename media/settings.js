@@ -147,7 +147,10 @@
 
 			const name = document.createElement('div');
 			name.className = 'modelName';
-			name.textContent = a.displayName || a.id;
+			// 名字是实例属性：在岗显示开业/上岗赋予的员工名，未在岗显示「无名字」（CEO 2026-08-18）
+			const empName = st ? (st.employeeName ?? null) : null;
+			const jdName = (st && st.displayName) || a.displayName || a.id;
+			name.textContent = empName ? `${jdName} · ${empName}` : `${jdName} · 无名字`;
 			nameLine.appendChild(name);
 
 			if (st && st.status === 'pending-cho') {
