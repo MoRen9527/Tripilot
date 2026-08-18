@@ -1643,6 +1643,8 @@ type SettingsInboundMessage =
 	| { type: 'refreshToolsAndMcp' }
 	| { type: 'refreshCustomAgents' }
 	| { type: 'refreshAgents' }
+	| { type: 'staffingOnboard'; roleId: string; displayName?: string }
+	| { type: 'staffingDecide'; requestId: string; decision: 'approved' | 'rejected'; roleId?: string }
 	| { type: 'setFollowChatProfile'; enabled: boolean }
 	| { type: 'setSyncChatProfileFromSettings'; enabled: boolean }
 	| { type: 'setEditsEnableHealing'; enabled: boolean }
@@ -1683,6 +1685,7 @@ type SettingsOutboundMessage =
 				mcpServers: McpServerStatus[];
 				customAgents: WorkspaceCustomAgentInfo[];
 				triLcAgents?: TriLCAgent[];
+				triLcStaffing?: unknown;
 		  }
 	| {
 				type: 'update';
@@ -1701,6 +1704,7 @@ type SettingsOutboundMessage =
 				mcpServers?: McpServerStatus[];
 				customAgents?: WorkspaceCustomAgentInfo[];
 				triLcAgents?: TriLCAgent[];
+				triLcStaffing?: unknown;
 		  }
 	| { type: 'setPage'; page: 'models' | 'tools' | 'agents' }
 	| { type: 'discoveredCommands'; commands: string[] };
@@ -1816,6 +1820,32 @@ class TripilotSettingsPanel {
 					case 'refreshAgents':
 						await this.fetchAndPostAgents();
 						return;
+					case 'staffingOnboard': {
+						// FADE-004 登记：勾选候选 → pending-cho（CHO 审批门）
+						try {
+							const r = await this.triLcClient.staffingOnboard(msg.roleId);
+							if (r && r.status !== 202) {
+								vscode.window.showWarningMessage(`上岗请求未受理：${r.message ?? r.error ?? 'unknown'}`);
+							}
+						} catch (e) {
+							vscode.window.showErrorMessage(`上岗请求失败：${e instanceof Error ? e.message : String(e)}`);
+						}
+						await this.fetchAndPostAgents();
+						return;
+					}
+					case 'staffingDecide': {
+						// CHO 审批（面板代理，approver=panel-cho，审计留痕）
+						try {
+							const r = await this.triLcClient.staffingDecide(msg.requestId, msg.decision);
+							if (r && r.status !== 200) {
+								vscode.window.showWarningMessage(`审批未受理：${r.message ?? r.error ?? 'unknown'}`);
+							}
+						} catch (e) {
+							vscode.window.showErrorMessage(`审批失败：${e instanceof Error ? e.message : String(e)}`);
+						}
+						await this.fetchAndPostAgents();
+						return;
+					}
 				case 'setFollowChatProfile': {
 					const enabled = !!msg.enabled;
 					await this.context.globalState.update(TripilotSettingsPanel.FOLLOW_CHAT_PROFILE_KEY, enabled);
@@ -2037,7 +2067,14 @@ class TripilotSettingsPanel {
 		} catch {
 			// TriLC not available — keep current list
 		}
-		this.post({ type: 'update', triLcAgents: this.tricompanyAgents });
+		// FADE-004：agents 页同步上岗名册（候选可见 + 开业选定打钩 + 待审徽标）
+		let staffing: any = null;
+		try {
+			staffing = await this.triLcClient.staffingRoster();
+		} catch {
+			// roster 不可达（老 daemon）— 仅列表，无上岗态
+		}
+		this.post({ type: 'update', triLcAgents: this.tricompanyAgents, triLcStaffing: staffing });
 	}
 
 

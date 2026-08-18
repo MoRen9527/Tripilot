@@ -275,6 +275,29 @@ export class TriLCClient {
     }
   }
 
+  // ── FADE-004 候选岗位发布 / 员工上岗 ──
+
+  /** GET /internal/v1/staffing/roster — JD 全集 + 在岗/待审状态。 */
+  async staffingRoster(signal?: AbortSignal): Promise<any | null> {
+    try {
+      return await this.jsonRequest<any>('GET', '/internal/v1/staffing/roster', null, signal);
+    } catch {
+      return null;
+    }
+  }
+
+  /** POST /internal/v1/staffing/onboard — 勾选候选 → pending-cho 请求。 */
+  async staffingOnboard(roleId: string): Promise<any> {
+    const body = JSON.stringify({ roleId, requester: 'ceo-panel' });
+    return this.jsonRequest<any>('POST', '/internal/v1/staffing/onboard', body);
+  }
+
+  /** POST /internal/v1/staffing/decide — CHO 审批。 */
+  async staffingDecide(requestId: string, decision: 'approved' | 'rejected', note?: string): Promise<any> {
+    const body = JSON.stringify({ requestId, decision, approver: 'panel-cho', note: note ?? '' });
+    return this.jsonRequest<any>('POST', '/internal/v1/staffing/decide', body);
+  }
+
   /** Fetch system prompt for a specific TriCompany agent. */
   async getAgentSystemPrompt(agentId: string, signal?: AbortSignal): Promise<string | undefined> {
     try {

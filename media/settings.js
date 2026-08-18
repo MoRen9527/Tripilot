@@ -89,6 +89,7 @@
 	let profileEditsEnableHealingMode = 'inherit';
 	let customAgents = [];
 	let triLcAgents = [];
+	let triLcStaffing = null; // FADE-004：roster { chainState, roster[], counts }
 
 	function renderTriLcAgents() {
 		if (!agentsListEl) return;
@@ -101,22 +102,88 @@
 			if (agentsStatusEl) agentsStatusEl.textContent = 'No agents found';
 			return;
 		}
+		// FADE-004 候选岗位发布：岗位=JD（单一真源），勾选=上岗（CHO 审批），
+		// 分身 spawn 是另一层 HC（clone-dispatch 协议）——提示行说明两者关系。
+		if (triLcStaffing && Array.isArray(triLcStaffing.roster)) {
+			const hint = document.createElement('div');
+			hint.className = 'modelMeta';
+			hint.style.margin = '0 0 8px 0';
+			hint.textContent = `上岗名册（链态 ${triLcStaffing.chainState}）：在岗 ${triLcStaffing.counts.active}/${triLcStaffing.counts.total}` +
+				(triLcStaffing.counts.pending > 0 ? `，待 CHO 审批 ${triLcStaffing.counts.pending}` : '') +
+				'。勾选候选提交上岗（CHO 审批）；每个岗位可按分身派工协议创建多个分身并行执行任务。';
+			agentsListEl.appendChild(hint);
+		}
 		if (agentsStatusEl) agentsStatusEl.textContent = `${triLcAgents.length} agents loaded`;
+		const statusByRole = new Map(
+			(triLcStaffing?.roster ?? []).map((r) => [r.roleId, r]),
+		);
 		for (const a of triLcAgents) {
+			const st = statusByRole.get(a.id);
 			const row = document.createElement('div');
 			row.className = 'row';
 
 			const left = document.createElement('div');
+			const nameLine = document.createElement('div');
+			nameLine.style.display = 'flex';
+			nameLine.style.alignItems = 'center';
+			nameLine.style.gap = '8px';
+
+			// 上岗勾选框（FADE-004）：active=打钩锁定；candidate=可勾选；pending=审批中
+			const cb = document.createElement('input');
+			cb.type = 'checkbox';
+			cb.id = `staffing-${a.id}`;
+			cb.checked = st ? st.status === 'active' : false;
+			cb.disabled = !st || st.status === 'active' || st.status === 'pending-cho';
+			cb.title = !st ? '上岗名册不可达（老 daemon）'
+				: st.status === 'active' ? '在岗（开业选定或已审批上岗）'
+				: st.status === 'pending-cho' ? 'CHO 审批中'
+				: '勾选提交上岗申请（CHO 审批）';
+			cb.addEventListener('change', () => {
+				if (cb.checked) {
+					vscode.postMessage({ type: 'staffingOnboard', roleId: a.id, displayName: a.displayName });
+				}
+			});
+			nameLine.appendChild(cb);
+
 			const name = document.createElement('div');
 			name.className = 'modelName';
 			name.textContent = a.displayName || a.id;
-			left.appendChild(name);
+			nameLine.appendChild(name);
+
+			if (st && st.status === 'pending-cho') {
+				const badge = document.createElement('span');
+				badge.textContent = 'CHO 审批中';
+				badge.style.fontSize = '11px';
+				badge.style.color = 'var(--vscode-charts-orange, #d29922)';
+				nameLine.appendChild(badge);
+				const btnOk = document.createElement('button');
+				btnOk.textContent = '批准';
+				btnOk.className = 'iconButton';
+				btnOk.style.marginLeft = '6px';
+				btnOk.addEventListener('click', () =>
+					vscode.postMessage({ type: 'staffingDecide', requestId: st.requestId, decision: 'approved', roleId: a.id }));
+				const btnNo = document.createElement('button');
+				btnNo.textContent = '驳回';
+				btnNo.className = 'iconButton';
+				btnNo.addEventListener('click', () =>
+					vscode.postMessage({ type: 'staffingDecide', requestId: st.requestId, decision: 'rejected', roleId: a.id }));
+				nameLine.appendChild(btnOk);
+				nameLine.appendChild(btnNo);
+			}
+			if (st && st.status === 'active') {
+				const badge = document.createElement('span');
+				badge.textContent = '在岗';
+				badge.style.fontSize = '11px';
+				badge.style.color = 'var(--vscode-charts-green, #3fb950)';
+				nameLine.appendChild(badge);
+			}
+			left.appendChild(nameLine);
 
 			const meta = document.createElement('div');
 			meta.className = 'modelMeta';
 			const parts = [a.id];
+			if (a.role) parts.push(a.role);
 			if (a.decisionRights) parts.push(a.decisionRights);
-			if (Array.isArray(a.tools) && a.tools.length) parts.push(`tools: ${a.tools.join(', ')}`);
 			meta.textContent = parts.join(' · ');
 			left.appendChild(meta);
 
@@ -643,6 +710,7 @@
 				mcpServers = Array.isArray(msg.mcpServers) ? msg.mcpServers : [];
 				customAgents = Array.isArray(msg.customAgents) ? msg.customAgents : [];
 				triLcAgents = Array.isArray(msg.triLcAgents) ? msg.triLcAgents : [];
+				triLcStaffing = msg.triLcStaffing !== undefined ? msg.triLcStaffing : triLcStaffing;
 				renderAgentProfiles();
 				renderFollowChatProfile();
 				renderSyncChatProfileFromSettings();
@@ -676,6 +744,7 @@
 				mcpServers = Array.isArray(msg.mcpServers) ? msg.mcpServers : mcpServers;
 				customAgents = Array.isArray(msg.customAgents) ? msg.customAgents : customAgents;
 				if (msg.triLcAgents !== undefined) triLcAgents = Array.isArray(msg.triLcAgents) ? msg.triLcAgents : triLcAgents;
+				if (msg.triLcStaffing !== undefined) triLcStaffing = msg.triLcStaffing;
 				renderAgentProfiles();
 				renderFollowChatProfile();
 				renderSyncChatProfileFromSettings();
