@@ -286,9 +286,9 @@ export class TriLCClient {
     }
   }
 
-  /** POST /internal/v1/staffing/onboard — 勾选候选 → pending-cho 请求。 */
-  async staffingOnboard(roleId: string): Promise<any> {
-    const body = JSON.stringify({ roleId, requester: 'ceo-panel' });
+  /** POST /internal/v1/staffing/onboard — 勾选候选 → pending-cho 请求（employeeName = 勾选时起的名）。 */
+  async staffingOnboard(roleId: string, employeeName?: string): Promise<any> {
+    const body = JSON.stringify({ roleId, requester: 'ceo-panel', employeeName: employeeName ?? '' });
     return this.jsonRequest<any>('POST', '/internal/v1/staffing/onboard', body);
   }
 

@@ -1645,7 +1645,7 @@ type SettingsInboundMessage =
 	| { type: 'refreshToolsAndMcp' }
 	| { type: 'refreshCustomAgents' }
 	| { type: 'refreshAgents' }
-	| { type: 'staffingOnboard'; roleId: string; displayName?: string }
+	| { type: 'staffingOnboard'; roleId: string; displayName?: string; instanceName?: string }
 	| { type: 'staffingDecide'; requestId: string; decision: 'approved' | 'rejected'; roleId?: string }
 	| { type: 'setFollowChatProfile'; enabled: boolean }
 	| { type: 'setSyncChatProfileFromSettings'; enabled: boolean }
@@ -1823,9 +1823,23 @@ class TripilotSettingsPanel {
 						await this.fetchAndPostAgents();
 						return;
 					case 'staffingOnboard': {
-						// FADE-004 登记：勾选候选 → pending-cho（CHO 审批门）
+						// FADE-004 登记：勾选候选 → 起名（CEO 2026-08-19：勾选时应提示输入名字，
+						// 默认建议 = roster instanceName）→ pending-cho（CHO 审批门）
 						try {
-							const r = await this.triLcClient.staffingOnboard(msg.roleId);
+							const suggested = String(msg.instanceName ?? '').trim();
+							const employeeName = await vscode.window.showInputBox({
+								title: `为「${msg.displayName ?? msg.roleId}」上岗起名`,
+								prompt: '员工名字是实例属性（审批通过后写入在岗名册）',
+								value: suggested,
+								placeHolder: suggested || '例如：小敏',
+								ignoreFocusOut: true,
+							});
+							if (employeeName === undefined) {
+								// 取消 → 不提交申请（勾选回弹由 roster 刷新自然恢复）
+								await this.fetchAndPostAgents();
+								return;
+							}
+							const r = await this.triLcClient.staffingOnboard(msg.roleId, employeeName.trim());
 							if (r && r.status !== 202) {
 								vscode.window.showWarningMessage(`上岗请求未受理：${r.message ?? r.error ?? 'unknown'}`);
 							}
@@ -2221,6 +2235,7 @@ class TripilotSettingsPanel {
 		}
 
 		this.post({ type: 'update', visibleModelIds: this.getVisibleModelIds() });
+		TripilotChatViewProvider.refreshChatModelMenuFromSettings();
 	}
 
 	private getAutoModelInfo(): LmModelInfo {
@@ -2719,10 +2734,6 @@ class TripilotSettingsPanel {
 				<span class="codicon codicon-organization"></span>
 				<span>Agents</span>
 			</button>
-			<button class="navItem" data-page="customAgents">
-				<span class="codicon codicon-person"></span>
-				<span>Custom Agents</span>
-			</button>
 			<button class="navItem" data-page="tools">
 				<span class="codicon codicon-tools"></span>
 				<span>Tools & MCP</span>
@@ -2762,27 +2773,7 @@ class TripilotSettingsPanel {
 					<div id="agentsList" class="list"></div>
 				</div>
 			</section>
-			<section class="page hidden" data-page="customAgents">
-				<div class="header">
-					<h1 class="h1">Custom Agents</h1>
-				</div>
-				<div class="section">
-					<div class="modelMeta">
-						对齐 VS Code Copilot Chat 的 <b>Custom Agents</b>：在工作区的 <code>.github/agents</code> 目录下创建 <code>*.agent.md</code> 文件，并在 YAML frontmatter 中配置 <code>name</code>/<code>description</code>/<code>tools</code>/<code>model</code> 等字段。<br />
-						Tripilot 会自动扫描 <code>.github/agents/**/*.agent.md</code>，也会兼容旧格式 <code>.github/chatmodes/**/*.chatmode.md</code>。
-					</div>
-					<div class="inlineForm">
-						<input id="customAgentFileBase" class="text" placeholder="file base name (e.g. planner)" />
-						<div></div>
-						<div></div>
-						<button id="customAgentCreate" class="primary">Create</button>
-					</div>
-					<button id="customAgentRefresh" class="iconButton" title="Refresh">
-						<span class="codicon codicon-refresh"></span>
-					</button>
-					<div id="customAgentList" class="list"></div>
-				</div>
-			</section>
+			
 			<section class="page hidden" data-page="tools">
 				<div class="header">
 					<h1 class="h1">Tools & MCP</h1>
@@ -2911,6 +2902,8 @@ class TripilotSettingsPanel {
 class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 	// 开张后自动衔接项目初始化：每会话只自动认领一次（防轮询重复触发）
 	private initAutoClaimTried = false;
+	// 聊天 agent 菜单过滤：在岗员工 id 集（null = roster 不可达，回退全量）
+	private staffingActiveIds: Set<string> | null = null;
 	public static readonly viewType = 'tripilot.chatView';
 	private static activeInstance?: TripilotChatViewProvider;
 
@@ -2926,6 +2919,27 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 		} catch {
 			// ignore
 		}
+	}
+
+	/** CEO 2026-08-19：settings 模型启停后，chat 模型菜单即时重建（visibleModelIds 白名单生效）。 */
+	public static refreshChatModelMenuFromSettings(): void {
+		try {
+			void TripilotChatViewProvider.activeInstance?.repostTrilcModelMenu();
+		} catch {
+			// ignore
+		}
+	}
+
+	public repostTrilcModelMenu(): void {
+		const built = this.buildTrilcDirectLmModels();
+		this.postAny({
+			type: 'lmModels',
+			models: built.models,
+			selectedModelId: built.selectedModelId,
+			provider: 'trilc-direct',
+			runtimeCount: this.lastTrilcModels.length,
+			filteredCount: built.models.length
+		});
 	}
 
 	private view?: vscode.WebviewView;
@@ -3623,9 +3637,15 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 	private postAgentsList(): void {
 		const items: Array<{ id: string; label: string; description?: string }> = [];
 
-		// TriCompany agents from TriLC (primary source)
-		if (this.tricompanyAgents.length) {
-			for (const a of this.tricompanyAgents) {
+		// TriCompany agents from TriLC (primary source)。
+		// CEO 2026-08-19：聊天可选范围 = 在岗员工——staffing roster active 过滤；
+		// roster 不可达（老 daemon/开业前）回退全量列表。
+		const activeRosterIds = this.staffingActiveIds;
+		const agentPool = (activeRosterIds && activeRosterIds.size > 0)
+			? this.tricompanyAgents.filter((a) => activeRosterIds.has(a.id))
+			: this.tricompanyAgents;
+		if (agentPool.length) {
+			for (const a of agentPool) {
 				const rights = a.decisionRights;
 				const description = rights
 					? [
@@ -3651,6 +3671,13 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 	private async fetchAgentsFromTriLC(): Promise<void> {
 		if (this.tricompanyAgentsFetchInFlight) return this.tricompanyAgentsFetchInFlight;
 		this.tricompanyAgentsFetchInFlight = (async () => {
+			// CEO 2026-08-19：聊天可选范围 = 在岗员工——顺带刷 staffing roster
+			try {
+				const roster = await this.triLcClient.staffingRoster();
+				if (roster && Array.isArray(roster.roster)) {
+					this.staffingActiveIds = new Set((roster.roster as Array<{ status?: string; roleId?: string }>).filter((r) => r.status === "active").map((r) => String(r.roleId)));
+				}
+			} catch { this.staffingActiveIds = null; }
 			try {
 				const agents = await this.triLcClient.listAgents();
 				if (agents.length) {

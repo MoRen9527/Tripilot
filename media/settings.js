@@ -140,7 +140,7 @@
 				: '勾选提交上岗申请（CHO 审批）';
 			cb.addEventListener('change', () => {
 				if (cb.checked) {
-					vscode.postMessage({ type: 'staffingOnboard', roleId: a.id, displayName: a.displayName });
+					vscode.postMessage({ type: 'staffingOnboard', roleId: a.id, displayName: a.displayName, instanceName: (st && st.instanceName) || '' });
 				}
 			});
 			nameLine.appendChild(cb);

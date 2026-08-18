@@ -2887,6 +2887,33 @@
   let initCardPayload = null;
   // 2026-08-15：自检运行态（局部记忆——progress 事件重拉渲染不冲掉按钮 loading 态）
   let selfcheckRunning = false;
+  // 自检实时进度（CEO 2026-08-19）：started 事件起维护，finished 清空；卡片空态时渲染这些行
+  let selfcheckLive = null; // { checks: [{id, status, detail}] }
+
+  function renderSelfcheckLiveRows(runningId) {
+    if (!initCardEl) return;
+    const existing = initCardEl.querySelectorAll('[data-check]');
+    const rowsHtml = (selfcheckLive ? selfcheckLive.checks : []).map((c) => {
+      const isRunning = runningId != null && c.id === runningId;
+      const cls = c.status === 'fail' ? 'initCheckFail' : c.status === 'degraded' ? 'initCheckDegraded' : c.status === 'ok' ? 'initCheckOk' : '';
+      const mark = c.status === 'fail' ? '✕' : c.status === 'degraded' ? '~' : c.status === 'ok' ? '✓' : isRunning ? '⟳' : '—';
+      const label = c.status === 'pending' ? (isRunning ? '检测中…' : '待检') : (c.detail || '');
+      return '<div class="initCheck ' + cls + '" data-check="' + escapeHtml(c.id) + '"><span>' + mark + '</span><span><b>' + escapeHtml(c.id) + '</b>: ' + escapeHtml(label) + '</span></div>';
+    }).join('');
+    if (!rowsHtml) return;
+    if (existing.length) {
+      const frag = document.createElement('div');
+      frag.innerHTML = rowsHtml;
+      const parent = existing[0].parentNode;
+      const first = existing[0];
+      for (const row of Array.from(frag.children)) parent.insertBefore(row, first);
+      for (const old of Array.from(existing)) old.remove();
+      return;
+    }
+    const placeholder = Array.from(initCardEl.querySelectorAll('.initCheck'))
+      .find((d) => /自检进行中|自检未运行/.test(d.textContent || ''));
+    if (placeholder) placeholder.outerHTML = rowsHtml;
+  }
   const INIT_PHASE_LABEL = {
     selfcheck: 'SELFCHECK · 安装态自检',
     onboarding: 'ONBOARDING · 公司开张',
@@ -2948,7 +2975,18 @@
       const checks = (sc && Array.isArray(sc.checks)) ? sc.checks : [];
       const order = { fail: 0, degraded: 1, ok: 2, skipped: 3 };
       const sorted = checks.slice().sort((a, b) => (order[a.status] ?? 4) - (order[b.status] ?? 4));
-      if (!sorted.length) {
+      if (!sorted.length && selfcheckLive && selfcheckLive.checks.length) {
+        // 自检进行中：渲染实时探测行（started/progress 事件维护，CEO 2026-08-19）
+        const firstPending = selfcheckLive.checks.find((c) => c.status === 'pending');
+        for (const c of selfcheckLive.checks) {
+          const isRunning = firstPending && c.id === firstPending.id;
+          const cls = c.status === 'fail' ? 'initCheckFail' : c.status === 'degraded' ? 'initCheckDegraded' : c.status === 'ok' ? 'initCheckOk' : '';
+          const mark = c.status === 'fail' ? '✕' : c.status === 'degraded' ? '~' : c.status === 'ok' ? '✓' : isRunning ? '⟳' : '—';
+          const label = c.status === 'pending' ? (isRunning ? '检测中…' : '待检') : (c.detail || '');
+          blocks.push('<div class="initCheck ' + cls + '" data-check="' + escapeHtml(c.id) + '"><span>' + mark + '</span><span><b>' + escapeHtml(c.id) + '</b>: ' + escapeHtml(label) + '</span></div>');
+        }
+        blocks.push('<div class="initCheck">自检进行中…（五探测逐项执行，约 1-2 分钟）</div>');
+      } else if (!sorted.length) {
         blocks.push('<div class="initCheck">' + (selfcheckRunning ? '自检进行中…（五探测逐项执行，约 1-2 分钟）' : '自检未运行。') + '</div>');
       } else {
         for (const c of sorted) {
@@ -3247,16 +3285,31 @@
 
   function onInitEvent(ev) {
     if (!ev || !initCardVisible()) return;
-    // selfcheck 运行中的逐项进度：live 更新诊断卡行（完成后 host 会重拉全量卡片）
+    // selfcheck 实时进度（CEO 2026-08-19：过程可见，不能等跑完才出结果）：
+    // started 建五探测行（待检/运行中），progress 逐行翻转，finished 后 host 重拉全量卡。
+    if (ev.type === 'init:selfcheck-started') {
+      const data = (ev.data && typeof ev.data === 'object') ? ev.data : {};
+      const ids = Array.isArray(data.checks) ? data.checks : [];
+      selfcheckLive = { checks: ids.map((id) => ({ id: String(id), status: 'pending', detail: '' })) };
+      selfcheckRunning = true;
+      renderSelfcheckLiveRows();
+    }
     if (ev.type === 'init:selfcheck-progress') {
       const data = (ev.data && typeof ev.data === 'object') ? ev.data : {};
-      const row = initCardEl.querySelector('[data-check="' + CSS.escape(String(data.checkId || '')) + '"]');
-      if (row) {
-        const cls = data.status === 'fail' ? 'initCheckFail' : data.status === 'degraded' ? 'initCheckDegraded' : data.status === 'ok' ? 'initCheckOk' : '';
-        row.className = 'initCheck ' + cls;
-        const mark = data.status === 'fail' ? '✕' : data.status === 'degraded' ? '~' : data.status === 'ok' ? '✓' : '—';
-        row.innerHTML = '<span>' + mark + '</span><span><b>' + escapeHtml(String(data.checkId || '')) + '</b>: ' + escapeHtml(String(data.detail || '')) + '</span>';
+      const id = String(data.checkId || '');
+      if (selfcheckLive) {
+        const entry = selfcheckLive.checks.find((c) => c.id === id);
+        if (entry) { entry.status = String(data.status || 'ok'); entry.detail = String(data.detail || ''); }
+        else selfcheckLive.checks.push({ id, status: String(data.status || 'ok'), detail: String(data.detail || '') });
+        // 当前进行中的 = 第一个 pending 标记 running
+        const firstPending = selfcheckLive.checks.find((c) => c.status === 'pending');
+        renderSelfcheckLiveRows(firstPending ? firstPending.id : null);
       }
+    }
+    if (ev.type === 'init:selfcheck-finished') {
+      selfcheckLive = null;
+      selfcheckRunning = false;
+      // host 会重拉全量卡片（含 summary），此处不重复渲染
     }
     // i4-2：五维同步逐维三态 live 更新（未同步 → 同步中 → 已同步/降级；
     // 完成后 init:sync-finished 触发 host 重拉全量卡片）
