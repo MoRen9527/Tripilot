@@ -1116,6 +1116,10 @@ body {
 
 .body-rich {
   white-space: normal;
+  /* CEO 十一轮：工具卡自适应组卡宽度——flex 子项允许收缩（min-width:0），
+     否则内部长路径把整卡撑出面板。 */
+  min-width: 0;
+  flex: 1;
 }
 
 .partTitle {
@@ -1153,6 +1157,9 @@ body {
   border-radius: 8px;
   padding: 6px 8px;
   background: var(--vscode-input-background);
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
 }
 
 .toolInvocation.is-failed {
@@ -1218,6 +1225,8 @@ body {
   max-width: 100%;
   box-sizing: border-box;
   max-height: 260px;
+  /* 长 Windows 路径/JSON 键无空格，pre-wrap 换不了行——anywhere 允许任意点断行 */
+  overflow-wrap: anywhere;
 }
 
 .todoNote {
