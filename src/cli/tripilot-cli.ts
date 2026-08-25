@@ -139,7 +139,11 @@ interface ToolResult {
   is_error?: boolean;
 }
 
-async function executeTool(tool: ToolCall, cwd: string): Promise<ToolResult> {
+// P0-1 加固（2026-08-25）：shell 执行与 cwd 外写入需显式 --allow-shell 授权，
+// 默认拒绝（模型驱动的任意命令执行零门禁 = RCE 面）。
+let ALLOW_SHELL = false;
+async function executeTool(tool: ToolCall, cwd: string, opts?: { allowShell?: boolean }): Promise<ToolResult> {
+  if (opts) ALLOW_SHELL = !!opts.allowShell;
   const args = tool.arguments;
   try {
     switch (tool.name) {
@@ -161,6 +165,9 @@ async function executeTool(tool: ToolCall, cwd: string): Promise<ToolResult> {
         const content = String(args.content ?? '');
         if (!filePath) throw new Error('file_path is required');
         const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath);
+        if (!ALLOW_SHELL && !path.resolve(resolved).startsWith(path.resolve(cwd))) {
+          return { tool_use_id: tool.id, content: `DENIED: write outside cwd (${resolved}) requires --allow-shell consent.` };
+        }
         await fs.mkdir(path.dirname(resolved), { recursive: true });
         await fs.writeFile(resolved, content, 'utf-8');
         return { tool_use_id: tool.id, content: `File written: ${resolved}` };
@@ -184,6 +191,9 @@ async function executeTool(tool: ToolCall, cwd: string): Promise<ToolResult> {
       case 'run_command': {
         const command = String(args.command ?? '');
         if (!command) throw new Error('command is required');
+        if (!ALLOW_SHELL) {
+          return { tool_use_id: tool.id, content: 'DENIED: run_command requires explicit --allow-shell consent. Ask the user to re-run with --allow-shell if shell access is truly needed.' };
+        }
         const cmdCwd = args.cwd ? (path.isAbsolute(String(args.cwd)) ? String(args.cwd) : path.resolve(cwd, String(args.cwd))) : cwd;
         const timeout = typeof args.timeout === 'number' ? args.timeout : 30000;
         const output = await runShellCommand(command, cmdCwd, timeout);
@@ -339,6 +349,7 @@ function parseArgs(args: string[]): CliOptions {
     version: false,
     prompt: '',
     interactive: false,
+    allowShell: false,
   };
 
   const positional: string[] = [];
@@ -347,6 +358,9 @@ function parseArgs(args: string[]): CliOptions {
     switch (args[i]) {
       case '--port':
         opts.port = parseInt(args[++i] ?? '', 10) || DEFAULT_PORT;
+        break;
+      case '--allow-shell':
+        opts.allowShell = true;
         break;
       case '--model':
         opts.model = args[++i] ?? DEFAULT_MODEL;
@@ -551,6 +565,7 @@ async function sendMessage(opts: CliOptions, messages: AnthropicMessage[]): Prom
 
 // ── Tool execution loop ──
 
+let cliAllowShell = false;
 const MAX_TOOL_ROUNDS = 10;
 
 async function conversationLoop(
@@ -585,7 +600,8 @@ async function conversationLoop(
     const toolResults: ToolResult[] = [];
     for (const tc of result.toolCalls) {
       process.stdout.write(`  ▶ ${tc.name} ... `);
-      const res = await executeTool(tc, cwd);
+      const res = await executeTool(tc, cwd, { allowShell: cliAllowShell });
+      console.error(`[round ${round + 1}/${MAX_TOOL_ROUNDS}] tool=${tc.name}`);
       toolResults.push(res);
       process.stdout.write(res.is_error ? '✗\n' : '✓\n');
     }
@@ -717,6 +733,7 @@ async function checkTriLC(port: number): Promise<boolean> {
 
 async function main(): Promise<void> {
   const opts = parseArgs(process.argv.slice(2));
+  cliAllowShell = !!opts.allowShell;
 
   if (opts.help) {
     printHelp();
