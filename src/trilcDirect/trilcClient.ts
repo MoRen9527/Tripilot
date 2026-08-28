@@ -3,6 +3,7 @@
 // Supports SSE streaming (default) and JSON modes.
 
 import * as http from 'node:http';
+import { internalTokenHeaders } from '../trilc-auth';
 
 // ── Types ──
 
@@ -254,6 +255,7 @@ export class TrilcDirectClient {
             ...(cfg.apiKey ? { 'Authorization': `Bearer ${cfg.apiKey}` } : {}),
             ...(cfg.additionalHeaders ?? {}),
             'User-Agent': `TriPilot/${this.extensionVersion}`,
+            ...internalTokenHeaders(), // LG-002: daemon 全局 token 门（fail-closed）
           },
           timeout: 120_000,
         },
@@ -379,6 +381,7 @@ export class TrilcDirectClient {
             'Accept': 'application/json',
             ...(cfg.apiKey ? { 'Authorization': `Bearer ${cfg.apiKey}` } : {}),
             ...(cfg.additionalHeaders ?? {}),
+            ...internalTokenHeaders(), // LG-002: daemon 全局 token 门（fail-closed）
           },
           timeout: 30_000,
         },

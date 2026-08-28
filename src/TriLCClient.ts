@@ -15,6 +15,7 @@
  */
 
 import * as http from 'node:http';
+import { internalTokenHeaders } from './trilc-auth';
 
 // ── Types ──
 
@@ -165,6 +166,7 @@ export class TriLCClient {
         {
           timeout: 0, // no timeout for SSE
           signal,
+          headers: internalTokenHeaders(), // LG-002: daemon 全局 token 门（fail-closed）
         },
         (res) => {
           if (res.statusCode !== 200) {
@@ -346,12 +348,15 @@ export class TriLCClient {
           port: url.port,
           path: url.pathname + url.search,
           method,
-          headers: body
-            ? {
-                'content-type': 'application/json',
-                'content-length': Buffer.byteLength(body).toString(),
-              }
-            : {},
+          headers: {
+            ...(body
+              ? {
+                  'content-type': 'application/json',
+                  'content-length': Buffer.byteLength(body).toString(),
+                }
+              : {}),
+            ...internalTokenHeaders(), // LG-002: daemon 全局 token 门（fail-closed）
+          },
           timeout: this.timeout,
           signal,
         },

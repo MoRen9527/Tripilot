@@ -12,6 +12,7 @@ import { execFile } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { createInterface } from 'node:readline';
 import { executeCodeTask } from '@trimetaverse/tricode';
+import { internalTokenHeaders, isLocalDaemonTarget } from '../trilc-auth';
 
 // ── Types ──
 
@@ -422,6 +423,8 @@ function httpPost(
           Accept: 'text/event-stream',
           'User-Agent': `TripilotCLI/${VERSION}`,
           ...headers,
+          // LG-002: daemon 全局 token 门——仅本地 daemon 目标附加，防 token 外泄
+          ...(isLocalDaemonTarget(parsedUrl) ? internalTokenHeaders() : {}),
         },
         timeout: timeoutMs,
       },

@@ -9,6 +9,7 @@ import { McpClientManager, makeMcpLmToolName, type McpServerConfig, type McpServ
 import { JsonlChatHistoryStore, type ChatHistoryEvent } from './chatHistory';
 import { TrilcDirectClient, type TrilcClientConfig, type TrilcModelInfo, type TrilcMessage, type TrilcTool, type TrilcContentBlock, type OpenAIChatMessage, type TrilcAutoModelsSession } from './trilcDirect/trilcClient';
 import { TriLCClient, type StreamCallbacks, type SubmitTaskRequest, type TriLCAgent } from './TriLCClient';
+import { installTrilcTokenFetch, internalTokenHeaders } from './trilc-auth';
 import { applyPatch as applyUnifiedPatch, diffLines, parsePatch } from 'diff';
 
 type WebviewInboundMessage =
@@ -736,6 +737,12 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(mcpManager);
 	const extensionVersion = String((context as any)?.extension?.packageJSON?.version ?? '0.0.0');
 	const editorVersionHeader = `vscode/${vscode.version}`;
+	// LG-002：daemon p0fix3 全局 token 门（fail-closed，除 /healthz 外全路由要求
+	// X-Internal-Token）——fetch 包装单点覆盖 init 族等全部 fetch 连接点；
+	// node:http 直连点在各自请求构造处经 internalTokenHeaders() 注入。
+	// token 请求期读 env，未配置时零行为变化。
+	installTrilcTokenFetch(process.env,
+		vscode.workspace.getConfiguration('tripilot.trilcDirect').get<string>('baseUrl') || undefined);
 	const provider = new TripilotChatViewProvider(context, mcpManager, extensionVersion, editorVersionHeader);
 	TripilotChatViewProvider.setActiveInstance(provider);
 	context.subscriptions.push(
@@ -3293,7 +3300,7 @@ class TripilotChatViewProvider implements vscode.WebviewViewProvider {
 				}, 70_000);
 			};
 			const req = http.request(`${baseUrl}/internal/v1/init/events`, {
-				headers: { accept: 'text/event-stream' },
+				headers: { accept: 'text/event-stream', ...internalTokenHeaders() }, // LG-002: daemon 全局 token 门
 			}, (res) => {
 				res.setEncoding('utf-8');
 				resetWatchdog();
